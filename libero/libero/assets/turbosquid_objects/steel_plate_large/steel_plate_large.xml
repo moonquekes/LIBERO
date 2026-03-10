@@ -1,0 +1,23 @@
+<mujoco model="steel_plate_large">
+  <asset>
+    <material name="steel_plate_large_mat" rgba="0.62 0.64 0.68 1" specular="0.9" shininess="0.95" reflectance="0.2" />
+  </asset>
+
+  <worldbody>
+    <body>
+      <body name="object">
+        <site type="box" pos="0 0 0.0072" quat="1 0 0 0" size="0.085 0.085 0.0008" group="0" rgba="0.8 0.8 0.0 0" name="top_side" />
+        <site type="box" pos="0 0 0.0008" quat="1 0 0 0" size="0.085 0.085 0.0008" group="0" rgba="0.8 0.8 0.0 0" name="bottom_side" />
+        <site type="box" pos="0.085 0 0.004" quat="1 0 0 0" size="0.0008 0.085 0.004" group="0" rgba="0.8 0.8 0.0 0" name="right_side" />
+        <site type="box" pos="-0.085 0 0.004" quat="1 0 0 0" size="0.0008 0.085 0.004" group="0" rgba="0.8 0.8 0.0 0" name="left_side" />
+
+        <geom name="steel_plate_large_visual" type="box" pos="0 0 0.004" size="0.085 0.085 0.004" material="steel_plate_large_mat" contype="0" conaffinity="0" group="1" />
+        <geom name="steel_plate_large_collision" solimp="0.998 0.998 0.001" solref="0.001 1" density="180" friction="1.0 0.3 0.1" type="box" pos="0 0 0.004" size="0.085 0.085 0.004" group="0" rgba="0.8 0.8 0.8 0.3" />
+      </body>
+
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

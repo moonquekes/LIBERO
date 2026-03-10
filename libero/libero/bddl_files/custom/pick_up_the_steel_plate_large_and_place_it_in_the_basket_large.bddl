@@ -1,0 +1,83 @@
+(define (problem LIBERO_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language Pick the large steel plate and place it in the large basket)
+    (:regions
+      (bin_region
+          (:target main_table)
+          (:ranges (
+              (0.22 0.16 0.28 0.22)
+            )
+          )
+      )
+      (target_object_region
+          (:target main_table)
+          (:ranges (
+              (0.025 -0.125 0.07500000000000001 -0.07500000000000001)
+            )
+          )
+      )
+      (other_object_region_0
+          (:target main_table)
+          (:ranges (
+              (-0.22 -0.23 -0.16 -0.17)
+            )
+          )
+      )
+      (other_object_region_1
+          (:target main_table)
+          (:ranges (
+              (-0.22 0.02 -0.16 0.08)
+            )
+          )
+      )
+      (other_object_region_3
+          (:target main_table)
+          (:ranges (
+              (0.10 -0.26 0.16 -0.20)
+            )
+          )
+      )
+      (other_object_region_4
+          (:target main_table)
+          (:ranges (
+              (0.24 -0.02 0.30 0.04)
+            )
+          )
+      )
+      (contain_region
+          (:target basket_large_1)
+      )
+    )
+
+  (:fixtures
+    main_table - table
+  )
+
+  (:objects
+    steel_plate_large_1 - steel_plate_large
+    basket_large_1 - basket_large
+    cream_cheese_1 - cream_cheese
+    milk_1 - milk
+    butter_1 - butter
+    orange_juice_1 - orange_juice
+  )
+
+  (:obj_of_interest
+    steel_plate_large_1
+    basket_large_1
+  )
+
+  (:init
+    (On steel_plate_large_1 main_table_target_object_region)
+    (On cream_cheese_1 main_table_other_object_region_0)
+    (On milk_1 main_table_other_object_region_1)
+    (On butter_1 main_table_other_object_region_3)
+    (On orange_juice_1 main_table_other_object_region_4)
+    (On basket_large_1 main_table_bin_region)
+  )
+
+  (:goal
+    (And (In steel_plate_large_1 basket_large_1_contain_region))
+  )
+
+)
