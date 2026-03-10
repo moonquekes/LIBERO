@@ -26,7 +26,23 @@ from robosuite.utils.input_utils import input2action
 
 import libero.libero.envs.bddl_utils as BDDLUtils
 from libero.libero.envs import *
+from libero.libero.envs.suction_sticky_wrapper import SuctionStickyWrapper
 from termcolor import colored
+
+
+def register_keyboard_callbacks(viewer, device):
+    def _register(method_name, callback):
+        if callback is None or not hasattr(viewer, method_name):
+            return
+        method = getattr(viewer, method_name)
+        try:
+            method("any", callback)
+        except TypeError:
+            method(callback)
+
+    _register("add_keypress_callback", device.on_press)
+    _register("add_keyup_callback", getattr(device, "on_release", None))
+    _register("add_keyrepeat_callback", device.on_press)
 
 
 def collect_human_trajectory(
@@ -321,6 +337,7 @@ if __name__ == "__main__":
     )
 
     env = DataCollectionWrapper(env, tmp_directory)
+    env = SuctionStickyWrapper(env)
 
     # initialize device
     if args.device == "keyboard":
@@ -329,9 +346,7 @@ if __name__ == "__main__":
         device = Keyboard(
             pos_sensitivity=args.pos_sensitivity, rot_sensitivity=args.rot_sensitivity
         )
-        env.viewer.add_keypress_callback("any", device.on_press)
-        env.viewer.add_keyup_callback("any", device.on_release)
-        env.viewer.add_keyrepeat_callback("any", device.on_press)
+        register_keyboard_callbacks(env.viewer, device)
     elif args.device == "spacemouse":
         from robosuite.devices import SpaceMouse
 
@@ -370,3 +385,5 @@ if __name__ == "__main__":
                 tmp_directory, new_dir, env_info, args, remove_directory
             )
             i += 1
+
+    env.close()

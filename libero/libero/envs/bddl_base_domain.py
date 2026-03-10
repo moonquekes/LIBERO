@@ -825,7 +825,11 @@ class BDDLBaseDomain(SingleArmEnv):
 
     def get_robot_state_vector(self, obs):
         return np.concatenate(
-            [obs["robot0_gripper_qpos"], obs["robot0_eef_pos"], obs["robot0_eef_quat"]]
+            [
+                np.atleast_1d(obs["robot0_gripper_qpos"]),
+                np.atleast_1d(obs["robot0_eef_pos"]),
+                np.atleast_1d(obs["robot0_eef_quat"]),
+            ]
         )
 
     def is_fixture(self, object_name):

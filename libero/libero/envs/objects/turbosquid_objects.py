@@ -207,3 +207,40 @@ class WhiteYellowMug(TurbosquidObjects):
     ):
         super().__init__(name, obj_name, joints)
         self.rotation = (-np.pi / 2, -np.pi / 2)
+
+
+@register_object
+class SteelPlate(TurbosquidObjects):
+    def __init__(
+        self,
+        name="steel_plate",
+        obj_name="steel_plate",
+        joints=[dict(type="free", damping="0.0005")],
+    ):
+        super().__init__(name, obj_name, joints)
+        self.rotation = (0, 0)
+        self.rotation_axis = "x"
+
+
+@register_object
+class BasketLarge(TurbosquidObjects):
+    def __init__(
+        self,
+        name="basket_large",
+        obj_name="basket_large",
+        joints=[dict(type="free", damping="0.0005")],
+    ):
+        super().__init__(name, obj_name, joints)
+
+
+@register_object
+class SteelPlateLarge(TurbosquidObjects):
+    def __init__(
+        self,
+        name="steel_plate_large",
+        obj_name="steel_plate_large",
+        joints=[dict(type="free", damping="0.0005")],
+    ):
+        super().__init__(name, obj_name, joints)
+        self.rotation = (0, 0)
+        self.rotation_axis = "x"
