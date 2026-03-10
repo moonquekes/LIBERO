@@ -25,7 +25,7 @@ cd "$SCRIPTS_DIR"
 
 convert_one() {
   local demo_file="$1"
-  local source_stem output_subdir create_log_file output_dataset
+  local source_stem output_file create_log_file output_dataset
 
   if [[ ! -f "$demo_file" ]]; then
     echo "[convert] 跳过不存在文件: $demo_file"
@@ -33,23 +33,25 @@ convert_one() {
   fi
 
   source_stem="$(basename "$demo_file" .hdf5)"
-  output_subdir="$OUTPUT_DIR/$source_stem"
+  output_file="$OUTPUT_DIR/$source_stem.hdf5"
 
-  if [[ -d "$output_subdir" && "$OVERWRITE_EXISTING" != "1" ]]; then
-    if find "$output_subdir" -maxdepth 1 -type f -name "*.hdf5" | grep -q .; then
-      echo "[convert] 已存在输出，跳过: $demo_file"
-      find "$output_subdir" -maxdepth 1 -type f -name "*.hdf5" | sort
-      return 0
-    fi
+  if [[ -f "$output_file" && "$OVERWRITE_EXISTING" != "1" ]]; then
+    echo "[convert] 已存在输出，跳过: $demo_file"
+    echo "$output_file"
+    return 0
   fi
 
-  mkdir -p "$output_subdir"
+  mkdir -p "$OUTPUT_DIR"
+
+  if [[ -f "$output_file" && "$OVERWRITE_EXISTING" == "1" ]]; then
+    rm -f "$output_file"
+  fi
 
   echo "[convert] 输入: $demo_file"
   create_log_file=$(mktemp)
   conda run -n "$ENV_NAME" python create_dataset.py \
     --demo-file "$demo_file" \
-    --dataset-path "$output_subdir" \
+    --dataset-path "$output_file" \
     --use-camera-obs \
     --camera-resolution "$CAMERA_RES" \
     --filter-noop \

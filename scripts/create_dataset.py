@@ -45,14 +45,18 @@ def resolve_output_dataset_path(dataset_path: str, bddl_file_name: str) -> str:
     flat_dataset_name = bddl_rel_path.replace("/", "__").replace(".bddl", ".hdf5")
 
     if dataset_path:
-        output_dir = Path(dataset_path).expanduser()
-        if not output_dir.is_absolute():
-            output_dir = (Path(__file__).resolve().parents[1] / output_dir).resolve()
+        output_path = Path(dataset_path).expanduser()
+        if not output_path.is_absolute():
+            output_path = (Path(__file__).resolve().parents[1] / output_path).resolve()
     else:
-        output_dir = Path(__file__).resolve().parents[1] / "datasets" / "converted"
+        output_path = Path(__file__).resolve().parents[1] / "datasets" / "converted"
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    return str(output_dir / flat_dataset_name)
+    if output_path.suffix == ".hdf5":
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        return str(output_path)
+
+    output_path.mkdir(parents=True, exist_ok=True)
+    return str(output_path / flat_dataset_name)
 
 
 def clip_vector_norm(vector: np.ndarray, max_norm: float) -> np.ndarray:

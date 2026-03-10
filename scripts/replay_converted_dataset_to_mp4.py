@@ -45,8 +45,9 @@ def main():
     args = parser.parse_args()
 
     dataset_path = Path(args.dataset).resolve()
+    dataset_stem = dataset_path.stem
     if args.output_dir is None:
-        output_dir = dataset_path.parent / f"{dataset_path.stem}_replay"
+        output_dir = dataset_path.parent / f"{dataset_stem}_replay"
     else:
         output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -99,7 +100,7 @@ def main():
                 canvas_h = max(agent_h, wrist_h) + 40
                 canvas_w = agent_w + wrist_w
 
-                out_path = output_dir / f"{ep}_replay.mp4"
+                out_path = output_dir / f"{dataset_stem}__{ep}_replay.mp4"
                 ensure_parent(out_path)
                 writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), args.fps, (canvas_w, canvas_h))
 
@@ -142,7 +143,7 @@ def main():
         finally:
             env.close()
 
-    summary_path = output_dir / "summary.txt"
+    summary_path = output_dir / f"{dataset_stem}__summary.txt"
     summary_path.write_text("\n".join(summary), encoding="utf-8")
     print(f"summary={summary_path}", flush=True)
 
