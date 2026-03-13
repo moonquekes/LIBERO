@@ -19,6 +19,14 @@ from libero.libero import get_libero_path
 from libero.libero.envs.suction_sticky_wrapper import SuctionStickyWrapper
 
 
+def load_source_demos(hdf5_file):
+    if "trajectory" in hdf5_file:
+        return hdf5_file.attrs, [("trajectory", hdf5_file["trajectory"])]
+
+    data_grp = hdf5_file["data"]
+    return data_grp.attrs, [(demo_name, data_grp[demo_name]) for demo_name in list(data_grp.keys())]
+
+
 def set_grip_cylinder_visibility(env, alpha=0.0):
     try:
         current = env
@@ -74,6 +82,27 @@ def is_noop_action(action: np.ndarray, prev_action: np.ndarray | None, threshold
     return np.linalg.norm(action[:-1]) < threshold and action[-1] == prev_action[-1]
 
 
+def compute_noop_preserve_indices(
+    actions: np.ndarray,
+    cap_index: int,
+    keep_before: int,
+    keep_after: int,
+) -> set[int]:
+    preserve_indices = set()
+    if len(actions) == 0 or (keep_before <= 0 and keep_after <= 0):
+        return preserve_indices
+
+    for idx in range(max(cap_index + 1, 1), len(actions)):
+        if np.isclose(actions[idx][-1], actions[idx - 1][-1]):
+            continue
+
+        start = max(cap_index, idx - max(keep_before, 0))
+        end = min(len(actions), idx + max(keep_after, 0) + 1)
+        preserve_indices.update(range(start, end))
+
+    return preserve_indices
+
+
 def transform_action(action: np.ndarray, args: argparse.Namespace) -> np.ndarray:
     transformed = np.asarray(action, dtype=np.float64).copy()
     transformed[:3] *= args.replay_translation_scale
@@ -110,6 +139,60 @@ def split_action(action: np.ndarray, args: argparse.Namespace) -> list[np.ndarra
         step_action[:6] = action[:6] / substeps
         split_actions.append(step_action)
     return split_actions
+
+
+def append_transition(
+    env,
+    action: np.ndarray,
+    args: argparse.Namespace,
+    replay_states: list,
+    replay_actions: list,
+    gripper_states: list,
+    joint_states: list,
+    ee_states: list,
+    robot_states: list,
+    agentview_images: list,
+    eye_in_hand_images: list,
+    agentview_depths: list,
+    eye_in_hand_depths: list,
+):
+    replay_states.append(env.sim.get_state().flatten())
+    obs, reward, done, info = env.step(action)
+
+    if not args.no_proprio:
+        if "robot0_gripper_qpos" in obs:
+            gripper_states.append(obs["robot0_gripper_qpos"])
+
+        joint_states.append(obs["robot0_joint_pos"])
+
+        ee_states.append(
+            np.hstack(
+                (
+                    obs["robot0_eef_pos"],
+                    T.quat2axisangle(obs["robot0_eef_quat"]),
+                )
+            )
+        )
+
+    robot_states.append(env.get_robot_state_vector(obs))
+
+    if args.use_camera_obs:
+        if args.use_depth:
+            agentview_depths.append(obs["agentview_depth"])
+            eye_in_hand_depths.append(obs["robot0_eye_in_hand_depth"])
+
+        agentview_images.append(obs["agentview_image"])
+        eye_in_hand_images.append(obs["robot0_eye_in_hand_image"])
+    else:
+        env.render()
+
+    replay_actions.append(action.copy())
+    return obs, reward, done, info
+
+
+def log_if_enabled(args: argparse.Namespace, message: str):
+    if not args.quiet:
+        print(message)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -148,6 +231,18 @@ def main():
         type=float,
         default=1e-4,
         help="no-op 判定阈值（官方风格：前 6 维接近 0 且 gripper 未变化）",
+    )
+    parser.add_argument(
+        "--noop-keep-before-gripper-change",
+        type=int,
+        default=8,
+        help="启用 noop 过滤时，在 gripper/吸盘开关动作前保留的 noop 步数",
+    )
+    parser.add_argument(
+        "--noop-keep-after-gripper-change",
+        type=int,
+        default=8,
+        help="启用 noop 过滤时，在 gripper/吸盘开关动作后保留的 noop 步数",
     )
     parser.add_argument(
         "--camera-resolution",
@@ -202,25 +297,34 @@ def main():
         default=16,
         help="单个动作最多拆分成多少个子步",
     )
+    parser.add_argument(
+        "--success-settle-steps",
+        type=int,
+        default=40,
+        help="主动作序列结束后额外回放的稳定步数上限，用于等待释放/掉落后任务判定生效",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="减少转换过程中的中间输出，仅保留必要结果",
+    )
 
     args = parser.parse_args()
 
     hdf5_path = args.demo_file
     f = h5py.File(hdf5_path, "r")
-    env_name = f["data"].attrs["env"]
+    source_attrs, demos = load_source_demos(f)
+    env_name = source_attrs["env"]
 
-    env_args = f["data"].attrs["env_info"]
-    env_kwargs = json.loads(f["data"].attrs["env_info"])
+    env_args = source_attrs["env_info"]
+    env_kwargs = json.loads(source_attrs["env_info"])
 
-    problem_info = json.loads(f["data"].attrs["problem_info"])
+    problem_info = json.loads(source_attrs["problem_info"])
     problem_info["domain_name"]
     problem_name = problem_info["problem_name"]
     language_instruction = problem_info["language_instruction"]
 
-    # list of all demonstrations episodes
-    demos = list(f["data"].keys())
-
-    bddl_file_name = f["data"].attrs["bddl_file_name"]
+    bddl_file_name = source_attrs["bddl_file_name"]
 
     hdf5_path = resolve_output_dataset_path(args.dataset_path, bddl_file_name)
 
@@ -232,7 +336,7 @@ def main():
     grp = h5py_f.create_group("data")
 
     grp.attrs["env_name"] = env_name
-    grp.attrs["problem_info"] = f["data"].attrs["problem_info"]
+    grp.attrs["problem_info"] = source_attrs["problem_info"]
     grp.attrs["macros_image_convention"] = macros.IMAGE_CONVENTION
 
     libero_utils.update_env_kwargs(
@@ -256,7 +360,7 @@ def main():
 
     grp.attrs["bddl_file_name"] = bddl_file_name
     grp.attrs["bddl_file_content"] = open(bddl_file_name, "r").read()
-    print(grp.attrs["bddl_file_content"])
+    log_if_enabled(args, grp.attrs["bddl_file_content"])
 
     env = TASK_MAPPING[problem_name](
         **env_kwargs,
@@ -267,23 +371,23 @@ def main():
         "type": 1,
         "env_name": env_name,
         "problem_name": problem_name,
-        "bddl_file": f["data"].attrs["bddl_file_name"],
+        "bddl_file": source_attrs["bddl_file_name"],
         "env_kwargs": env_kwargs,
     }
 
     grp.attrs["env_args"] = json.dumps(env_args)
-    print(grp.attrs["env_args"])
+    log_if_enabled(args, grp.attrs["env_args"])
     total_len = 0
-    demos = demos
+    total_success = 0
 
     cap_index = 5
 
-    for (i, ep) in enumerate(demos):
-        print("Playing back random episode... (press ESC to quit)")
+    for (i, (ep, ep_src_grp)) in enumerate(demos):
+        log_if_enabled(args, "Playing back random episode... (press ESC to quit)")
 
         # # select an episode randomly
         # read the model xml, using the metadata stored in the attribute for this episode
-        model_xml = f["data/{}".format(ep)].attrs["model_file"]
+        model_xml = ep_src_grp.attrs["model_file"]
         reset_success = False
         while not reset_success:
             try:
@@ -299,8 +403,8 @@ def main():
             env.viewer.set_camera(0)
 
         # load the flattened mujoco states
-        states = f["data/{}/states".format(ep)][()]
-        actions = np.array(f["data/{}/actions".format(ep)][()])
+        states = ep_src_grp["states"][()]
+        actions = np.array(ep_src_grp["actions"][()])
 
         num_actions = actions.shape[0]
 
@@ -328,16 +432,25 @@ def main():
         dones = []
 
         noop_skipped = 0
+        noop_preserved = 0
         split_steps_added = 0
         replay_states = []
         replay_actions = []
         prev_kept_action = None
+        success = False
         can_check_alignment = (
             args.replay_translation_scale == 1.0
             and args.replay_rotation_scale == 1.0
             and args.max_translation_norm <= 0
             and args.max_rotation_norm <= 0
             and not args.split_large_actions
+        )
+        transformed_actions = np.asarray([transform_action(action, args) for action in actions])
+        noop_preserve_indices = compute_noop_preserve_indices(
+            transformed_actions,
+            cap_index,
+            args.noop_keep_before_gripper_change,
+            args.noop_keep_after_gripper_change,
         )
 
         for j, action in enumerate(actions):
@@ -346,73 +459,87 @@ def main():
             if j < cap_index:
                 continue
 
-            transformed_action = transform_action(action, args)
+            transformed_action = transformed_actions[j]
 
             if args.filter_noop and is_noop_action(transformed_action, prev_kept_action, args.noop_threshold):
-                noop_skipped += 1
-                continue
+                if j in noop_preserve_indices:
+                    noop_preserved += 1
+                else:
+                    noop_skipped += 1
+                    continue
 
             sub_actions = split_action(transformed_action, args)
             split_steps_added += max(0, len(sub_actions) - 1)
 
             for sub_action in sub_actions:
-                replay_states.append(env.sim.get_state().flatten())
-                obs, reward, done, info = env.step(sub_action)
+                obs, reward, done, info = append_transition(
+                    env,
+                    sub_action,
+                    args,
+                    replay_states,
+                    replay_actions,
+                    gripper_states,
+                    joint_states,
+                    ee_states,
+                    robot_states,
+                    agentview_images,
+                    eye_in_hand_images,
+                    agentview_depths,
+                    eye_in_hand_depths,
+                )
 
                 if can_check_alignment and j < num_actions - 1 and sub_action is sub_actions[-1]:
                     state_playback = env.sim.get_state().flatten()
                     err = np.linalg.norm(states[j + 1] - state_playback)
                     if err > 0.01:
-                        print(
+                        log_if_enabled(
+                            args,
                             f"[warning] playback diverged by {err:.2f} for ep {ep} at step {j}"
                         )
 
-                replay_actions.append(sub_action.copy())
-
-                if not args.no_proprio:
-                    if "robot0_gripper_qpos" in obs:
-                        gripper_states.append(obs["robot0_gripper_qpos"])
-
-                    joint_states.append(obs["robot0_joint_pos"])
-
-                    ee_states.append(
-                        np.hstack(
-                            (
-                                obs["robot0_eef_pos"],
-                                T.quat2axisangle(obs["robot0_eef_quat"]),
-                            )
-                        )
-                    )
-
-                robot_states.append(env.get_robot_state_vector(obs))
-
-                if args.use_camera_obs:
-                    if args.use_depth:
-                        agentview_depths.append(obs["agentview_depth"])
-                        eye_in_hand_depths.append(obs["robot0_eye_in_hand_depth"])
-
-                    agentview_images.append(obs["agentview_image"])
-                    eye_in_hand_images.append(obs["robot0_eye_in_hand_image"])
-                else:
-                    env.render()
-
             prev_kept_action = transformed_action.copy()
+
+        settle_steps_used = 0
+        if len(replay_actions) > 0 and not env._check_success() and args.success_settle_steps > 0:
+            settle_action = replay_actions[-1].copy()
+            settle_action[:6] = 0.0
+            for _ in range(args.success_settle_steps):
+                append_transition(
+                    env,
+                    settle_action,
+                    args,
+                    replay_states,
+                    replay_actions,
+                    gripper_states,
+                    joint_states,
+                    ee_states,
+                    robot_states,
+                    agentview_images,
+                    eye_in_hand_images,
+                    agentview_depths,
+                    eye_in_hand_depths,
+                )
+                settle_steps_used += 1
+                if env._check_success():
+                    break
 
         # end of one trajectory
         states = np.asarray(replay_states)
         actions = np.asarray(replay_actions)
         if len(actions) == 0:
-            print(f"[warning] demo_{i} 在过滤后无有效样本，已跳过")
+            log_if_enabled(args, f"[warning] demo_{i} 在过滤后无有效样本，已跳过")
             continue
+        success = bool(env._check_success())
         dones = np.zeros(len(actions)).astype(np.uint8)
         dones[-1] = 1
         rewards = np.zeros(len(actions)).astype(np.uint8)
-        rewards[-1] = 1
+        rewards[-1] = np.uint8(success)
         if args.use_camera_obs:
-            print(len(actions), len(agentview_images))
+            log_if_enabled(args, f"{len(actions)} {len(agentview_images)}")
             assert len(actions) == len(agentview_images)
-        print(
-            f"[info] demo_{i}: kept={len(actions)}, noop_skipped={noop_skipped}, cap_skipped={cap_index}, split_steps_added={split_steps_added}"
+        log_if_enabled(
+            args,
+            f"[info] demo_{i}: kept={len(actions)}, noop_skipped={noop_skipped}, noop_preserved={noop_preserved}, cap_skipped={cap_index}, split_steps_added={split_steps_added}, settle_steps={settle_steps_used}, success={success}"
         )
 
         ep_data_grp = grp.create_group(f"demo_{i}")
@@ -451,9 +578,14 @@ def main():
         ep_data_grp.attrs["num_samples"] = num_samples
         ep_data_grp.attrs["model_file"] = model_xml
         ep_data_grp.attrs["init_state"] = states[init_idx]
+        ep_data_grp.attrs["success"] = np.uint8(success)
+        ep_data_grp.attrs["success_settle_steps"] = settle_steps_used
         total_len += num_samples
+        total_success += int(success)
 
     grp.attrs["num_demos"] = len(demos)
+    grp.attrs["num_success"] = total_success
+    grp.attrs["success_rate"] = float(total_success) / float(len(demos)) if len(demos) > 0 else 0.0
     grp.attrs["total"] = total_len
     env.close()
 

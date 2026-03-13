@@ -6,6 +6,7 @@ import init_path
 import json
 import numpy as np
 import os
+import re
 import robosuite as suite
 import shutil
 import time
@@ -345,8 +346,31 @@ def collect_human_trajectory(
     return saving
 
 
-def build_demo_hdf5_path(output_dir, collection_name, demo_index):
-    return os.path.join(output_dir, f"{collection_name}_demo_{demo_index:03d}.hdf5")
+def sanitize_for_path(text):
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", str(text)).strip("_")
+    return sanitized or "demo"
+
+
+def ensure_unique_path(path):
+    if not os.path.exists(path):
+        return path
+
+    root, ext = os.path.splitext(path)
+    suffix = 2
+    while True:
+        candidate = f"{root}_{suffix:03d}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+        suffix += 1
+
+
+def build_episode_hdf5_path(output_dir, problem_info, episode_dir):
+    domain_name = sanitize_for_path(problem_info.get("domain_name", "domain"))
+    problem_name = sanitize_for_path(problem_info.get("problem_name", "task"))
+    instruction = sanitize_for_path(problem_info.get("language_instruction", "demo"))
+    source_episode = sanitize_for_path(os.path.basename(episode_dir))
+    file_name = f"{domain_name}_ln_{problem_name}_{instruction}_{source_episode}.hdf5"
+    return ensure_unique_path(os.path.join(output_dir, file_name))
 
 
 def write_episode_to_hdf5(episode_dir, out_file, env_info, problem_info, args):
@@ -379,22 +403,23 @@ def write_episode_to_hdf5(episode_dir, out_file, env_info, problem_info, args):
 
     os.makedirs(os.path.dirname(out_file) or ".", exist_ok=True)
     with h5py.File(out_file, "w") as hdf5_file:
-        grp = hdf5_file.create_group("data")
-        ep_data_grp = grp.create_group("demo_1")
-        ep_data_grp.attrs["source_episode"] = os.path.basename(episode_dir)
+        traj_grp = hdf5_file.create_group("trajectory")
+        traj_grp.attrs["source_episode"] = os.path.basename(episode_dir)
 
         xml_path = os.path.join(episode_dir, "model.xml")
         with open(xml_path, "r", encoding="utf-8") as model_file:
-            ep_data_grp.attrs["model_file"] = model_file.read()
+            traj_grp.attrs["model_file"] = model_file.read()
 
-        ep_data_grp.create_dataset("states", data=np.array(states))
-        ep_data_grp.create_dataset("actions", data=np.array(actions))
+        traj_grp.create_dataset("states", data=np.array(states))
+        traj_grp.create_dataset("actions", data=np.array(actions))
+        traj_grp.attrs["num_samples"] = len(actions)
+        traj_grp.attrs["init_state"] = np.array(states[0])
 
         cam_obs_path = os.path.join(episode_dir, "camera_obs.npz")
         if os.path.exists(cam_obs_path):
             try:
                 obs_data = np.load(cam_obs_path, allow_pickle=True)
-                obs_grp = ep_data_grp.create_group("observations")
+                obs_grp = traj_grp.create_group("observations")
                 action_len = len(actions)
                 for cam_name in obs_data.files:
                     frames = obs_data[cam_name]
@@ -414,15 +439,16 @@ def write_episode_to_hdf5(episode_dir, out_file, env_info, problem_info, args):
                 print(f"[warn] 相机观测写入 HDF5 失败（{os.path.basename(episode_dir)}）：{e}")
 
         now = datetime.datetime.now()
-        grp.attrs["date"] = "{}-{}-{}".format(now.month, now.day, now.year)
-        grp.attrs["time"] = "{}:{}:{}".format(now.hour, now.minute, now.second)
-        grp.attrs["repository_version"] = suite.__version__
+        hdf5_file.attrs["file_structure"] = "single_trajectory"
+        hdf5_file.attrs["date"] = "{}-{}-{}".format(now.month, now.day, now.year)
+        hdf5_file.attrs["time"] = "{}:{}:{}".format(now.hour, now.minute, now.second)
+        hdf5_file.attrs["repository_version"] = suite.__version__
         if env_name is not None:
-            grp.attrs["env"] = env_name
-        grp.attrs["env_info"] = env_info
-        grp.attrs["problem_info"] = json.dumps(problem_info)
-        grp.attrs["bddl_file_name"] = args.bddl_file
-        grp.attrs["bddl_file_content"] = bddl_file_content
+            hdf5_file.attrs["env"] = env_name
+        hdf5_file.attrs["env_info"] = env_info
+        hdf5_file.attrs["problem_info"] = json.dumps(problem_info)
+        hdf5_file.attrs["bddl_file_name"] = args.bddl_file
+        hdf5_file.attrs["bddl_file_content"] = bddl_file_content
 
     return True
 
@@ -430,8 +456,6 @@ def write_episode_to_hdf5(episode_dir, out_file, env_info, problem_info, args):
 def gather_demonstrations_as_hdf5(
     directory,
     output_dir,
-    collection_name,
-    next_demo_index,
     env_info,
     problem_info,
     args,
@@ -443,7 +467,7 @@ def gather_demonstrations_as_hdf5(
 
     if not os.path.isdir(directory):
         print(f"[warn] 临时目录不存在，跳过 HDF5 汇总: {directory}")
-        return next_demo_index, []
+        return []
 
     exported_files = []
     for ep_directory in sorted(os.listdir(directory)):
@@ -454,7 +478,7 @@ def gather_demonstrations_as_hdf5(
         if not os.path.isdir(episode_dir):
             continue
 
-        out_file = build_demo_hdf5_path(output_dir, collection_name, next_demo_index)
+        out_file = build_episode_hdf5_path(output_dir, problem_info, episode_dir)
         wrote_file = write_episode_to_hdf5(
             episode_dir,
             out_file,
@@ -466,12 +490,11 @@ def gather_demonstrations_as_hdf5(
             continue
 
         exported_files.append(out_file)
-        next_demo_index += 1
 
         if cleanup_processed:
             shutil.rmtree(episode_dir, ignore_errors=True)
 
-    return next_demo_index, exported_files
+    return exported_files
 
 
 if __name__ == "__main__":
@@ -728,23 +751,20 @@ if __name__ == "__main__":
             "Invalid device choice: choose either 'keyboard' or 'spacemouse'."
         )
 
-    # make a new timestamped directory
-    t1, t2 = str(time.time()).split(".")
     os.makedirs(args.directory, exist_ok=True)
-    collection_name = (
-        f"{domain_name}_ln_{problem_name}_{t1}_{t2}_"
-        + language_instruction.replace(" ", "_").strip('""')
+    output_pattern = build_episode_hdf5_path(
+        args.directory,
+        problem_info,
+        os.path.join(tmp_directory, "ep_<timestamp>"),
     )
     print(
-        f"[info] 采集输出模式: 每个成功回合一个 HDF5，输出前缀: "
-        f"{os.path.join(args.directory, collection_name)}_demo_XXX.hdf5"
+        f"[info] 采集输出模式: 每个成功回合一个独立 HDF5，命名示例: {output_pattern}"
     )
 
     # collect demonstrations
 
     remove_directory = []
     i = 0
-    next_demo_index = 1
     while i < args.num_demonstration:
         print(i)
         saving = collect_human_trajectory(
@@ -769,11 +789,9 @@ if __name__ == "__main__":
         )
         if saving:
             print(remove_directory)
-            next_demo_index, exported_files = gather_demonstrations_as_hdf5(
+            exported_files = gather_demonstrations_as_hdf5(
                 tmp_directory,
                 args.directory,
-                collection_name,
-                next_demo_index,
                 env_info,
                 problem_info,
                 args,
@@ -787,11 +805,9 @@ if __name__ == "__main__":
         else:
             print("[info] 本回合未保存。只有成功完成任务的轨迹会写入独立 hdf5 文件")
 
-    next_demo_index, exported_files = gather_demonstrations_as_hdf5(
+    exported_files = gather_demonstrations_as_hdf5(
         tmp_directory,
         args.directory,
-        collection_name,
-        next_demo_index,
         env_info,
         problem_info,
         args,
