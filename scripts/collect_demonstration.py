@@ -179,6 +179,149 @@ def set_grip_cylinder_visibility(env, alpha=0.3):
         return False
 
 
+def get_suction_diagnostics(env):
+    default = {
+        "constraint_ok": False,
+        "attached": False,
+        "reason_code": 0,
+        "reason_label": "off",
+        "contact_angle_deg": np.nan,
+        "contact_radial_offset_m": np.nan,
+        "contact_body_id": -1,
+    }
+    if hasattr(env, "get_suction_diagnostics"):
+        default.update(env.get_suction_diagnostics())
+    return default
+
+
+def get_suction_display_context(env):
+    suction_on = bool(env.is_suction_on()) if hasattr(env, "is_suction_on") else False
+    nearest_distance = np.inf
+    nearest_body_id = -1
+    if hasattr(env, "get_nearest_attachable_distance"):
+        nearest_distance, nearest_body_id = env.get_nearest_attachable_distance()
+
+    probe = {
+        "available": False,
+        "constraint_ok": False,
+        "reason_code": 2,
+        "reason_label": "no_contact",
+        "contact_angle_deg": np.nan,
+        "contact_radial_offset_m": np.nan,
+        "contact_body_id": -1,
+    }
+    if hasattr(env, "get_current_constraint_probe"):
+        probe.update(env.get_current_constraint_probe())
+
+    return {
+        "suction_on": suction_on,
+        "nearest_attachable_distance_m": float(nearest_distance),
+        "nearest_attachable_body_id": int(nearest_body_id),
+        "probe": probe,
+    }
+
+
+def format_suction_status(diagnostics):
+    if diagnostics.get("attached") and diagnostics.get("constraint_ok"):
+        return "attached"
+
+    reason_code = int(diagnostics.get("reason_code", 0))
+    status_map = {
+        0: "off",
+        2: "no_contact",
+        3: "rejected:body",
+        4: "rejected:angle",
+        5: "rejected:radius",
+        6: "contact_lost",
+    }
+    return status_map.get(reason_code, diagnostics.get("reason_label", "unknown"))
+
+
+def get_model_from_env(env):
+    current = env
+    for _ in range(10):
+        if hasattr(current, "sim") and getattr(current, "sim") is not None:
+            return current.sim.model
+        if not hasattr(current, "env"):
+            break
+        current = current.env
+    return None
+
+
+def get_suction_body_name(env, body_id):
+    if body_id is None or int(body_id) < 0:
+        return "none"
+    model = get_model_from_env(env)
+    if model is None or int(body_id) >= model.nbody:
+        return str(body_id)
+    name = model.body_id2name(int(body_id))
+    return name or str(body_id)
+
+
+def get_suction_debug_lines(env, proximity_threshold_m):
+    diagnostics = get_suction_diagnostics(env)
+    display_context = get_suction_display_context(env)
+    suction_on = bool(display_context["suction_on"])
+    nearest_distance = float(display_context["nearest_attachable_distance_m"])
+    nearest_body_id = int(display_context["nearest_attachable_body_id"])
+    nearest_body_name = get_suction_body_name(env, nearest_body_id)
+    near_candidate = bool(
+        np.isfinite(nearest_distance) and nearest_distance <= float(proximity_threshold_m)
+    )
+    display_context["near_candidate"] = near_candidate
+
+    if not diagnostics.get("attached") and not near_candidate:
+        distance_text = "na" if not np.isfinite(nearest_distance) else f"{nearest_distance:.4f}"
+        suction_label = "on" if suction_on else "off"
+        line1 = f"suction={suction_label} attached=False near=False"
+        line2 = f"dist_m={distance_text} body={nearest_body_name}"
+        signature = (suction_label, "far", distance_text, nearest_body_name)
+        return diagnostics, line1, line2, signature, display_context
+
+    if diagnostics.get("attached"):
+        status = format_suction_status(diagnostics)
+        source = diagnostics
+    else:
+        probe = display_context["probe"]
+        status = format_suction_status(probe)
+        source = probe
+
+    angle_deg = source.get("contact_angle_deg", np.nan)
+    radial_offset = source.get("contact_radial_offset_m", np.nan)
+    body_id = int(source.get("contact_body_id", -1))
+    body_name = get_suction_body_name(env, body_id)
+
+    angle_text = "na" if not np.isfinite(angle_deg) else f"{float(angle_deg):.1f}"
+    radial_text = "na" if not np.isfinite(radial_offset) else f"{float(radial_offset):.4f}"
+    suction_label = "on" if suction_on else "off"
+    line1 = (
+        f"suction={suction_label} status={status} attached={bool(diagnostics['attached'])} "
+        f"ok={bool(source.get('constraint_ok', False))}"
+    )
+    line2 = f"angle_deg={angle_text} radial_m={radial_text} body={body_name}"
+    signature = (
+        suction_label,
+        status,
+        bool(diagnostics["attached"]),
+        bool(source.get("constraint_ok", False)),
+        int(source.get("reason_code", 0)),
+        angle_text,
+        radial_text,
+        body_name,
+    )
+    return diagnostics, line1, line2, signature, display_context
+
+
+def get_suction_debug_color(diagnostics, display_context):
+    if diagnostics.get("attached") and diagnostics.get("constraint_ok"):
+        return (80, 255, 80)
+    if not display_context.get("suction_on"):
+        return (80, 80, 255)
+    if not display_context.get("near_candidate"):
+        return (255, 200, 80)
+    return (0, 215, 255)
+
+
 def collect_human_trajectory(
     env,
     device,
@@ -198,6 +341,7 @@ def collect_human_trajectory(
     rotation_deadzone=0.0,
     max_translation_norm=0.0,
     max_rotation_norm=0.0,
+    suction_display_proximity_threshold_m=0.05,
 ):
     """
     Use the device (keyboard or SpaceNav 3D mouse) to collect a demonstration.
@@ -240,6 +384,7 @@ def collect_human_trajectory(
 
     camera_frames = {cam: [] for cam in record_cameras}
     preview_window_moved = False
+    last_suction_signature = None
 
     while True:
         count += 1
@@ -278,6 +423,12 @@ def collect_human_trajectory(
         # Run environment step
 
         obs, reward, done, _ = env.step(action)
+        suction_diagnostics, suction_line1, suction_line2, suction_signature, suction_display_context = (
+            get_suction_debug_lines(env, suction_display_proximity_threshold_m)
+        )
+        if suction_signature != last_suction_signature:
+            print(f"[suction] {suction_line1}; {suction_line2}")
+            last_suction_signature = suction_signature
         env.render()
 
         for cam in record_cameras:
@@ -297,6 +448,27 @@ def collect_human_trajectory(
                     display_frame = display_frame[::-1]
                 bgr = cv2.cvtColor(display_frame, cv2.COLOR_RGB2BGR)
                 bgr = cv2.resize(bgr, (WINDOW_SIZE, WINDOW_SIZE))
+                debug_color = get_suction_debug_color(suction_diagnostics, suction_display_context)
+                cv2.putText(
+                    bgr,
+                    suction_line1,
+                    (10, 24),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    debug_color,
+                    1,
+                    cv2.LINE_AA,
+                )
+                cv2.putText(
+                    bgr,
+                    suction_line2,
+                    (10, 46),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    debug_color,
+                    1,
+                    cv2.LINE_AA,
+                )
                 cv2.imshow(PREVIEW_WINDOW_NAME, bgr)
                 if not preview_window_moved:
                     cv2.moveWindow(PREVIEW_WINDOW_NAME, int(preview_window_x), int(preview_window_y))
@@ -643,6 +815,30 @@ if __name__ == "__main__":
         choices=["none", "x", "y", "xy"],
         help="按键平移方向反转：none/x/y/xy（用于修正视角方向不一致）",
     )
+    parser.add_argument(
+        "--suction-normal-max-angle-deg",
+        type=float,
+        default=25.0,
+        help="吸盘法向量最大夹角阈值（度）",
+    )
+    parser.add_argument(
+        "--suction-display-proximity-threshold-m",
+        type=float,
+        default=0.05,
+        help="状态窗口开始显示约束判断前，吸盘到最近可吸附物体表面的距离阈值（米）",
+    )
+    parser.add_argument(
+        "--suction-effective-radius-ratio",
+        type=float,
+        default=0.7,
+        help="吸盘有效支撑半径系数，相对 pad 半径",
+    )
+    parser.add_argument(
+        "--suction-detach-grace-steps",
+        type=int,
+        default=2,
+        help="吸盘脱附缓冲步数",
+    )
 
     parser.add_argument("--vendor-id", type=int, default=9583)
     parser.add_argument("--product-id", type=int, default=50734)
@@ -727,7 +923,12 @@ if __name__ == "__main__":
     print(f"[info] 采集临时目录: {tmp_directory}")
 
     env = DataCollectionWrapper(env, tmp_directory)
-    env = SuctionStickyWrapper(env)
+    env = SuctionStickyWrapper(
+        env,
+        normal_max_angle_deg=args.suction_normal_max_angle_deg,
+        effective_radius_ratio=args.suction_effective_radius_ratio,
+        detach_grace_steps=args.suction_detach_grace_steps,
+    )
 
     # initialize device
     if args.device == "keyboard":
@@ -786,6 +987,7 @@ if __name__ == "__main__":
             rotation_deadzone=args.rotation_deadzone,
             max_translation_norm=args.max_translation_norm,
             max_rotation_norm=args.max_rotation_norm,
+            suction_display_proximity_threshold_m=args.suction_display_proximity_threshold_m,
         )
         if saving:
             print(remove_directory)

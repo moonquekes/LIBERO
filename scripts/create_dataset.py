@@ -141,6 +141,20 @@ def split_action(action: np.ndarray, args: argparse.Namespace) -> list[np.ndarra
     return split_actions
 
 
+def get_suction_diagnostics(env) -> dict:
+    default = {
+        "constraint_ok": False,
+        "attached": False,
+        "reason_code": 0,
+        "contact_angle_deg": np.nan,
+        "contact_radial_offset_m": np.nan,
+        "contact_body_id": -1,
+    }
+    if hasattr(env, "get_suction_diagnostics"):
+        default.update(env.get_suction_diagnostics())
+    return default
+
+
 def append_transition(
     env,
     action: np.ndarray,
@@ -155,9 +169,25 @@ def append_transition(
     eye_in_hand_images: list,
     agentview_depths: list,
     eye_in_hand_depths: list,
+    suction_constraint_ok: list,
+    suction_attached: list,
+    suction_reason_code: list,
+    suction_contact_angle_deg: list,
+    suction_contact_radial_offset_m: list,
+    suction_contact_body_id: list,
 ):
     replay_states.append(env.sim.get_state().flatten())
     obs, reward, done, info = env.step(action)
+    diagnostics = get_suction_diagnostics(env)
+
+    suction_constraint_ok.append(np.uint8(bool(diagnostics.get("constraint_ok", False))))
+    suction_attached.append(np.uint8(bool(diagnostics.get("attached", False))))
+    suction_reason_code.append(np.int32(diagnostics.get("reason_code", 0)))
+    suction_contact_angle_deg.append(float(diagnostics.get("contact_angle_deg", np.nan)))
+    suction_contact_radial_offset_m.append(
+        float(diagnostics.get("contact_radial_offset_m", np.nan))
+    )
+    suction_contact_body_id.append(np.int32(diagnostics.get("contact_body_id", -1)))
 
     if not args.no_proprio:
         if "robot0_gripper_qpos" in obs:
@@ -237,6 +267,24 @@ def main():
         type=int,
         default=8,
         help="启用 noop 过滤时，在 gripper/吸盘开关动作前保留的 noop 步数",
+    )
+    parser.add_argument(
+        "--suction-normal-max-angle-deg",
+        type=float,
+        default=25.0,
+        help="吸盘法向量最大夹角阈值（度）",
+    )
+    parser.add_argument(
+        "--suction-effective-radius-ratio",
+        type=float,
+        default=0.7,
+        help="吸盘有效支撑半径系数，相对 pad 半径",
+    )
+    parser.add_argument(
+        "--suction-detach-grace-steps",
+        type=int,
+        default=2,
+        help="吸盘脱附缓冲步数",
     )
     parser.add_argument(
         "--noop-keep-after-gripper-change",
@@ -362,10 +410,22 @@ def main():
     grp.attrs["bddl_file_content"] = open(bddl_file_name, "r").read()
     log_if_enabled(args, grp.attrs["bddl_file_content"])
 
+    suction_wrapper_kwargs = {
+        "normal_max_angle_deg": float(args.suction_normal_max_angle_deg),
+        "effective_radius_ratio": float(args.suction_effective_radius_ratio),
+        "detach_grace_steps": int(args.suction_detach_grace_steps),
+    }
+
     env = TASK_MAPPING[problem_name](
         **env_kwargs,
     )
-    env = SuctionStickyWrapper(env)
+    env = SuctionStickyWrapper(env, **suction_wrapper_kwargs)
+    grp.attrs["suction_reason_codes_json"] = json.dumps(
+        env.get_suction_reason_codes(), sort_keys=True
+    )
+    grp.attrs["suction_wrapper_kwargs_json"] = json.dumps(
+        suction_wrapper_kwargs, sort_keys=True
+    )
 
     env_args = {
         "type": 1,
@@ -373,6 +433,7 @@ def main():
         "problem_name": problem_name,
         "bddl_file": source_attrs["bddl_file_name"],
         "env_kwargs": env_kwargs,
+        "suction_wrapper_kwargs": suction_wrapper_kwargs,
     }
 
     grp.attrs["env_args"] = json.dumps(env_args)
@@ -425,6 +486,13 @@ def main():
 
         agentview_depths = []
         eye_in_hand_depths = []
+
+        suction_constraint_ok = []
+        suction_attached = []
+        suction_reason_code = []
+        suction_contact_angle_deg = []
+        suction_contact_radial_offset_m = []
+        suction_contact_body_id = []
 
         agentview_seg = {0: [], 1: [], 2: [], 3: [], 4: []}
 
@@ -486,6 +554,12 @@ def main():
                     eye_in_hand_images,
                     agentview_depths,
                     eye_in_hand_depths,
+                    suction_constraint_ok,
+                    suction_attached,
+                    suction_reason_code,
+                    suction_contact_angle_deg,
+                    suction_contact_radial_offset_m,
+                    suction_contact_body_id,
                 )
 
                 if can_check_alignment and j < num_actions - 1 and sub_action is sub_actions[-1]:
@@ -518,6 +592,12 @@ def main():
                     eye_in_hand_images,
                     agentview_depths,
                     eye_in_hand_depths,
+                    suction_constraint_ok,
+                    suction_attached,
+                    suction_reason_code,
+                    suction_contact_angle_deg,
+                    suction_contact_radial_offset_m,
+                    suction_contact_body_id,
                 )
                 settle_steps_used += 1
                 if env._check_success():
@@ -545,6 +625,27 @@ def main():
         ep_data_grp = grp.create_group(f"demo_{i}")
 
         obs_grp = ep_data_grp.create_group("obs")
+        obs_grp.create_dataset(
+            "suction_constraint_ok", data=np.asarray(suction_constraint_ok, dtype=np.uint8)
+        )
+        obs_grp.create_dataset(
+            "suction_attached", data=np.asarray(suction_attached, dtype=np.uint8)
+        )
+        obs_grp.create_dataset(
+            "suction_reason_code", data=np.asarray(suction_reason_code, dtype=np.int32)
+        )
+        obs_grp.create_dataset(
+            "suction_contact_angle_deg",
+            data=np.asarray(suction_contact_angle_deg, dtype=np.float32),
+        )
+        obs_grp.create_dataset(
+            "suction_contact_radial_offset_m",
+            data=np.asarray(suction_contact_radial_offset_m, dtype=np.float32),
+        )
+        obs_grp.create_dataset(
+            "suction_contact_body_id",
+            data=np.asarray(suction_contact_body_id, dtype=np.int32),
+        )
         if not args.no_proprio:
             obs_grp.create_dataset(
                 "gripper_states", data=np.stack(gripper_states, axis=0)

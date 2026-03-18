@@ -22,6 +22,9 @@ SUBSTEP_TRANSLATION_NORM="${SUBSTEP_TRANSLATION_NORM:-0.25}"
 SUBSTEP_ROTATION_NORM="${SUBSTEP_ROTATION_NORM:-0.15}"
 MAX_ACTION_SUBSTEPS="${MAX_ACTION_SUBSTEPS:-16}"
 SUCCESS_SETTLE_STEPS="${SUCCESS_SETTLE_STEPS:-40}"
+SUCTION_NORMAL_MAX_ANGLE_DEG="${SUCTION_NORMAL_MAX_ANGLE_DEG:-10.0}"
+SUCTION_EFFECTIVE_RADIUS_RATIO="${SUCTION_EFFECTIVE_RADIUS_RATIO:-0.7}"
+SUCTION_DETACH_GRACE_STEPS="${SUCTION_DETACH_GRACE_STEPS:-2}"
 OVERWRITE_EXISTING="${OVERWRITE_EXISTING:-0}"
 SHOW_DATASET_INFO="${SHOW_DATASET_INFO:-0}"
 
@@ -73,6 +76,9 @@ convert_one() {
     --substep-rotation-norm "$SUBSTEP_ROTATION_NORM" \
     --max-action-substeps "$MAX_ACTION_SUBSTEPS" \
     --success-settle-steps "$SUCCESS_SETTLE_STEPS" \
+    --suction-normal-max-angle-deg "$SUCTION_NORMAL_MAX_ANGLE_DEG" \
+    --suction-effective-radius-ratio "$SUCTION_EFFECTIVE_RADIUS_RATIO" \
+    --suction-detach-grace-steps "$SUCTION_DETACH_GRACE_STEPS" \
     --quiet \
     $( [[ "$SPLIT_LARGE_ACTIONS" == "1" ]] && printf '%s' '--split-large-actions' ) >"$create_log_file" 2>&1; then
     echo "[convert] ${progress_label}失败: $(basename "$demo_file")"
