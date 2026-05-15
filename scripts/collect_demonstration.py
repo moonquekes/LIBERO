@@ -179,6 +179,43 @@ def set_grip_cylinder_visibility(env, alpha=0.3):
         return False
 
 
+def set_workpiece_center_marker_visibility(env, alpha=0.95):
+    """显示工件中心点，仅用于人工采集时辅助对准吸盘。"""
+    try:
+        current = env
+        model = None
+        for _ in range(10):
+            if hasattr(current, "sim") and getattr(current, "sim") is not None:
+                model = current.sim.model
+                break
+            if not hasattr(current, "env"):
+                break
+            current = current.env
+        if model is None:
+            return False
+
+        ids = []
+        center_site_re = re.compile(
+            r"^steel_plate(?:_round|_triangle|_large)?_1_center_marker$"
+        )
+        for site_id in range(model.nsite):
+            name = model.site_id2name(site_id)
+            if name and center_site_re.match(name):
+                ids.append(site_id)
+
+        for site_id in ids:
+            model.site_size[site_id, 0] = 0.008
+            model.site_size[site_id, 1] = 0.008
+            model.site_size[site_id, 2] = 0.008
+            model.site_rgba[site_id, 0] = 1.0
+            model.site_rgba[site_id, 1] = 0.0
+            model.site_rgba[site_id, 2] = 1.0
+            model.site_rgba[site_id, 3] = float(alpha)
+        return len(ids) > 0
+    except Exception:
+        return False
+
+
 def get_suction_diagnostics(env):
     default = {
         "constraint_ok": False,
@@ -322,6 +359,30 @@ def get_suction_debug_color(diagnostics, display_context):
     return (0, 215, 255)
 
 
+def get_success_debug_lines(raw_success, success_ready):
+    if success_ready:
+        line1 = "raw_success=True save_ready=True"
+        line2 = "goal=in_correct_bin release=complete"
+        signature = ("ready",)
+    elif raw_success:
+        line1 = "raw_success=True save_ready=False"
+        line2 = "goal=in_correct_bin release=waiting"
+        signature = ("waiting_release",)
+    else:
+        line1 = "raw_success=False save_ready=False"
+        line2 = "goal=not_reached release=not_ready"
+        signature = ("not_ready",)
+    return line1, line2, signature
+
+
+def get_success_debug_color(raw_success, success_ready):
+    if success_ready:
+        return (80, 255, 80)
+    if raw_success:
+        return (0, 215, 255)
+    return (180, 180, 180)
+
+
 def collect_human_trajectory(
     env,
     device,
@@ -342,6 +403,8 @@ def collect_human_trajectory(
     max_translation_norm=0.0,
     max_rotation_norm=0.0,
     suction_display_proximity_threshold_m=0.05,
+    require_suction_release_for_success=True,
+    show_workpiece_center_marker=True,
 ):
     """
     Use the device (keyboard or SpaceNav 3D mouse) to collect a demonstration.
@@ -362,6 +425,8 @@ def collect_human_trajectory(
             if show_grip_cylinder:
                 set_grip_cylinder_visibility(env, alpha=0.3)
             set_suction_indicator_visibility(env, alpha=0.7)
+            if show_workpiece_center_marker:
+                set_workpiece_center_marker_visibility(env, alpha=0.95)
             reset_success = True
         except:
             continue
@@ -385,6 +450,8 @@ def collect_human_trajectory(
     camera_frames = {cam: [] for cam in record_cameras}
     preview_window_moved = False
     last_suction_signature = None
+    last_success_signature = None
+    waiting_for_release_logged = False
 
     while True:
         count += 1
@@ -426,9 +493,23 @@ def collect_human_trajectory(
         suction_diagnostics, suction_line1, suction_line2, suction_signature, suction_display_context = (
             get_suction_debug_lines(env, suction_display_proximity_threshold_m)
         )
+        raw_success = env._check_success()
+        success_ready = raw_success
+        if require_suction_release_for_success:
+            success_ready = (
+                raw_success
+                and not bool(suction_display_context.get("suction_on"))
+                and not bool(suction_diagnostics.get("attached"))
+            )
+        success_line1, success_line2, success_signature = get_success_debug_lines(
+            raw_success, success_ready
+        )
         if suction_signature != last_suction_signature:
             print(f"[suction] {suction_line1}; {suction_line2}")
             last_suction_signature = suction_signature
+        if success_signature != last_success_signature:
+            print(f"[success] {success_line1}; {success_line2}")
+            last_success_signature = success_signature
         env.render()
 
         for cam in record_cameras:
@@ -469,6 +550,27 @@ def collect_human_trajectory(
                     1,
                     cv2.LINE_AA,
                 )
+                success_color = get_success_debug_color(raw_success, success_ready)
+                cv2.putText(
+                    bgr,
+                    success_line1,
+                    (10, 68),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    success_color,
+                    1,
+                    cv2.LINE_AA,
+                )
+                cv2.putText(
+                    bgr,
+                    success_line2,
+                    (10, 90),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    success_color,
+                    1,
+                    cv2.LINE_AA,
+                )
                 cv2.imshow(PREVIEW_WINDOW_NAME, bgr)
                 if not preview_window_moved:
                     cv2.moveWindow(PREVIEW_WINDOW_NAME, int(preview_window_x), int(preview_window_y))
@@ -476,12 +578,20 @@ def collect_human_trajectory(
                 cv2.waitKey(1)
             except Exception:
                 pass
+
+        if raw_success and not success_ready:
+            if not waiting_for_release_logged:
+                print("[info] 目标已到位，等待关闭吸盘并完全释放后再结束采集")
+                waiting_for_release_logged = True
+        else:
+            waiting_for_release_logged = False
+
         # Also break if we complete the task
         if task_completion_hold_count == 0:
             break
 
         # state machine to check for having a success for 10 consecutive timesteps
-        if env._check_success():
+        if success_ready:
             if task_completion_hold_count > 0:
                 task_completion_hold_count -= 1  # latched state, decrement count
             else:
@@ -839,6 +949,32 @@ if __name__ == "__main__":
         default=2,
         help="吸盘脱附缓冲步数",
     )
+    parser.add_argument(
+        "--require-suction-release-for-success",
+        dest="require_suction_release_for_success",
+        action="store_true",
+        default=True,
+        help="只有在任务成功且吸盘已关闭并完全脱离工件后，才结束当前采集回合（默认开启）",
+    )
+    parser.add_argument(
+        "--allow-success-while-attached",
+        dest="require_suction_release_for_success",
+        action="store_false",
+        help="允许工件仍被吸住时按任务成功直接结束采集",
+    )
+    parser.add_argument(
+        "--show-workpiece-center-marker",
+        dest="show_workpiece_center_marker",
+        action="store_true",
+        default=True,
+        help="采集窗口中显示工件中心点标记（默认开启，仅影响人工采集可视化）",
+    )
+    parser.add_argument(
+        "--hide-workpiece-center-marker",
+        dest="show_workpiece_center_marker",
+        action="store_false",
+        help="隐藏工件中心点辅助标记",
+    )
 
     parser.add_argument("--vendor-id", type=int, default=9583)
     parser.add_argument("--product-id", type=int, default=50734)
@@ -988,6 +1124,8 @@ if __name__ == "__main__":
             max_translation_norm=args.max_translation_norm,
             max_rotation_norm=args.max_rotation_norm,
             suction_display_proximity_threshold_m=args.suction_display_proximity_threshold_m,
+            require_suction_release_for_success=args.require_suction_release_for_success,
+            show_workpiece_center_marker=args.show_workpiece_center_marker,
         )
         if saving:
             print(remove_directory)

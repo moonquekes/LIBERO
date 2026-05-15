@@ -155,6 +155,81 @@ def get_suction_diagnostics(env) -> dict:
     return default
 
 
+def get_primary_in_goal(env):
+    for state in env.parsed_problem["goal_state"]:
+        if len(state) == 3 and state[0] == "in":
+            return state[1], state[2]
+    return None, None
+
+
+def get_object_center_z(env, object_name: str) -> float:
+    return float(env.sim.data.body_xpos[env.obj_body_id[object_name]][2])
+
+
+def get_site_top_height(env, site_name: str) -> float:
+    site_id = env.sim.model.site_name2id(site_name)
+    site_pos = np.asarray(env.sim.data.site_xpos[site_id], dtype=np.float64)
+    site_mat = np.asarray(env.sim.data.site_xmat[site_id], dtype=np.float64).reshape(3, 3)
+    site_size = np.asarray(env.object_sites_dict[site_name].size, dtype=np.float64)
+    top_pos = site_pos + site_mat[:, 2] * site_size[2]
+    return float(top_pos[2])
+
+
+def summarize_throw_filter(
+    suction_attached: list,
+    target_object_z: list,
+    bin_top_height: float | None,
+    release_margin: float,
+    peak_margin: float,
+):
+    metrics = {
+        "had_attachment": False,
+        "release_step": -1,
+        "release_height_m": np.nan,
+        "post_release_peak_height_m": np.nan,
+        "bin_top_height_m": np.nan if bin_top_height is None else float(bin_top_height),
+        "release_height_above_bin_m": np.nan,
+        "peak_height_above_bin_m": np.nan,
+        "filtered": False,
+        "reason": "not_applicable",
+    }
+
+    if bin_top_height is None or len(suction_attached) == 0 or len(target_object_z) == 0:
+        return metrics
+
+    attached = np.asarray(suction_attached, dtype=bool)
+    target_object_z = np.asarray(target_object_z, dtype=np.float64)
+    metrics["had_attachment"] = bool(np.any(attached))
+    if not metrics["had_attachment"]:
+        metrics["reason"] = "never_attached"
+        return metrics
+
+    release_candidates = np.where(attached[:-1] & (~attached[1:]))[0]
+    if release_candidates.size == 0:
+        metrics["reason"] = "no_release_detected"
+        return metrics
+
+    release_step = int(release_candidates[0] + 1)
+    release_height = float(target_object_z[min(release_step, len(target_object_z) - 1)])
+    post_release_peak = float(np.nanmax(target_object_z[release_step:]))
+    release_above_bin = release_height - float(bin_top_height)
+    peak_above_bin = post_release_peak - float(bin_top_height)
+    filtered = (release_above_bin > release_margin) or (peak_above_bin > peak_margin)
+
+    metrics.update(
+        {
+            "release_step": release_step,
+            "release_height_m": release_height,
+            "post_release_peak_height_m": post_release_peak,
+            "release_height_above_bin_m": release_above_bin,
+            "peak_height_above_bin_m": peak_above_bin,
+            "filtered": bool(filtered),
+            "reason": "obvious_throw" if filtered else "ok",
+        }
+    )
+    return metrics
+
+
 def append_transition(
     env,
     action: np.ndarray,
@@ -175,6 +250,8 @@ def append_transition(
     suction_contact_angle_deg: list,
     suction_contact_radial_offset_m: list,
     suction_contact_body_id: list,
+    target_object_name: str | None,
+    target_object_z: list | None,
 ):
     replay_states.append(env.sim.get_state().flatten())
     obs, reward, done, info = env.step(action)
@@ -188,6 +265,8 @@ def append_transition(
         float(diagnostics.get("contact_radial_offset_m", np.nan))
     )
     suction_contact_body_id.append(np.int32(diagnostics.get("contact_body_id", -1)))
+    if target_object_name is not None and target_object_z is not None:
+        target_object_z.append(get_object_center_z(env, target_object_name))
 
     if not args.no_proprio:
         if "robot0_gripper_qpos" in obs:
@@ -352,6 +431,23 @@ def main():
         help="主动作序列结束后额外回放的稳定步数上限，用于等待释放/掉落后任务判定生效",
     )
     parser.add_argument(
+        "--disable-throw-filter",
+        action="store_true",
+        help="关闭基于释放高度和峰值高度的保守抛投过滤",
+    )
+    parser.add_argument(
+        "--throw-release-height-margin",
+        type=float,
+        default=0.06,
+        help="目标件首次释放时允许高于目标框上沿的最大高度（米）",
+    )
+    parser.add_argument(
+        "--throw-peak-height-margin",
+        type=float,
+        default=0.10,
+        help="目标件释放后允许高于目标框上沿的最大峰值高度（米）",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="减少转换过程中的中间输出，仅保留必要结果",
@@ -426,6 +522,14 @@ def main():
     grp.attrs["suction_wrapper_kwargs_json"] = json.dumps(
         suction_wrapper_kwargs, sort_keys=True
     )
+    grp.attrs["trajectory_quality_filter_json"] = json.dumps(
+        {
+            "throw_filter_enabled": not args.disable_throw_filter,
+            "throw_release_height_margin_m": float(args.throw_release_height_margin),
+            "throw_peak_height_margin_m": float(args.throw_peak_height_margin),
+        },
+        sort_keys=True,
+    )
 
     env_args = {
         "type": 1,
@@ -440,6 +544,7 @@ def main():
     log_if_enabled(args, grp.attrs["env_args"])
     total_len = 0
     total_success = 0
+    target_object_name, target_region_name = get_primary_in_goal(env)
 
     cap_index = 5
 
@@ -493,6 +598,7 @@ def main():
         suction_contact_angle_deg = []
         suction_contact_radial_offset_m = []
         suction_contact_body_id = []
+        target_object_z = []
 
         agentview_seg = {0: [], 1: [], 2: [], 3: [], 4: []}
 
@@ -560,6 +666,8 @@ def main():
                     suction_contact_angle_deg,
                     suction_contact_radial_offset_m,
                     suction_contact_body_id,
+                    target_object_name,
+                    target_object_z,
                 )
 
                 if can_check_alignment and j < num_actions - 1 and sub_action is sub_actions[-1]:
@@ -598,6 +706,8 @@ def main():
                     suction_contact_angle_deg,
                     suction_contact_radial_offset_m,
                     suction_contact_body_id,
+                    target_object_name,
+                    target_object_z,
                 )
                 settle_steps_used += 1
                 if env._check_success():
@@ -609,7 +719,31 @@ def main():
         if len(actions) == 0:
             log_if_enabled(args, f"[warning] demo_{i} 在过滤后无有效样本，已跳过")
             continue
-        success = bool(env._check_success())
+        raw_goal_success = bool(env._check_success())
+        bin_top_height = None
+        if target_region_name is not None:
+            bin_top_height = get_site_top_height(env, target_region_name)
+        throw_metrics = summarize_throw_filter(
+            suction_attached,
+            target_object_z,
+            bin_top_height,
+            args.throw_release_height_margin,
+            args.throw_peak_height_margin,
+        )
+        throw_filter_triggered = (
+            (not args.disable_throw_filter)
+            and raw_goal_success
+            and bool(throw_metrics["filtered"])
+        )
+        success = raw_goal_success and not throw_filter_triggered
+        if args.disable_throw_filter:
+            throw_filter_reason = "disabled"
+        elif not raw_goal_success:
+            throw_filter_reason = "raw_goal_failed"
+        elif throw_filter_triggered:
+            throw_filter_reason = throw_metrics["reason"]
+        else:
+            throw_filter_reason = "ok"
         dones = np.zeros(len(actions)).astype(np.uint8)
         dones[-1] = 1
         rewards = np.zeros(len(actions)).astype(np.uint8)
@@ -621,6 +755,16 @@ def main():
             args,
             f"[info] demo_{i}: kept={len(actions)}, noop_skipped={noop_skipped}, noop_preserved={noop_preserved}, cap_skipped={cap_index}, split_steps_added={split_steps_added}, settle_steps={settle_steps_used}, success={success}"
         )
+        if raw_goal_success and throw_filter_triggered:
+            log_if_enabled(
+                args,
+                "[info] demo_{}: throw filter triggered "
+                "(release_above_bin={:.3f}m, peak_above_bin={:.3f}m)".format(
+                    i,
+                    float(throw_metrics["release_height_above_bin_m"]),
+                    float(throw_metrics["peak_height_above_bin_m"]),
+                ),
+            )
 
         ep_data_grp = grp.create_group(f"demo_{i}")
 
@@ -680,7 +824,23 @@ def main():
         ep_data_grp.attrs["model_file"] = model_xml
         ep_data_grp.attrs["init_state"] = states[init_idx]
         ep_data_grp.attrs["success"] = np.uint8(success)
+        ep_data_grp.attrs["raw_goal_success"] = np.uint8(raw_goal_success)
         ep_data_grp.attrs["success_settle_steps"] = settle_steps_used
+        ep_data_grp.attrs["throw_filter_enabled"] = np.uint8(not args.disable_throw_filter)
+        ep_data_grp.attrs["throw_filter_triggered"] = np.uint8(throw_filter_triggered)
+        ep_data_grp.attrs["throw_filter_reason"] = throw_filter_reason
+        ep_data_grp.attrs["throw_release_step"] = int(throw_metrics["release_step"])
+        ep_data_grp.attrs["throw_bin_top_height_m"] = float(throw_metrics["bin_top_height_m"])
+        ep_data_grp.attrs["throw_release_height_m"] = float(throw_metrics["release_height_m"])
+        ep_data_grp.attrs["throw_post_release_peak_height_m"] = float(
+            throw_metrics["post_release_peak_height_m"]
+        )
+        ep_data_grp.attrs["throw_release_height_above_bin_m"] = float(
+            throw_metrics["release_height_above_bin_m"]
+        )
+        ep_data_grp.attrs["throw_peak_height_above_bin_m"] = float(
+            throw_metrics["peak_height_above_bin_m"]
+        )
         total_len += num_samples
         total_success += int(success)
 
