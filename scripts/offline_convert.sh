@@ -7,8 +7,8 @@ DEFAULT_LIBERO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_NAME="${ENV_NAME:-vla-adapter}"
 LIBERO_ROOT="${LIBERO_ROOT:-$DEFAULT_LIBERO_ROOT}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-$SCRIPT_DIR}"
-COLLECT_DIR="${COLLECT_DIR:-$LIBERO_ROOT/data/suction_dataset/raw_hdf5}"
-OUTPUT_DIR="${OUTPUT_DIR:-$LIBERO_ROOT/data/suction_dataset/converted_hdf5}"
+COLLECT_DIR="${COLLECT_DIR:-$LIBERO_ROOT/data/suction_dataset_multi_part_sorting/raw_hdf5}"
+OUTPUT_DIR="${OUTPUT_DIR:-$LIBERO_ROOT/data/suction_dataset_multi_part_sorting/converted_hdf5}"
 NOOP_THRESHOLD="${NOOP_THRESHOLD:-1e-4}"
 NOOP_KEEP_BEFORE_GRIPPER_CHANGE="${NOOP_KEEP_BEFORE_GRIPPER_CHANGE:-8}"
 NOOP_KEEP_AFTER_GRIPPER_CHANGE="${NOOP_KEEP_AFTER_GRIPPER_CHANGE:-8}"
@@ -25,6 +25,9 @@ SUCCESS_SETTLE_STEPS="${SUCCESS_SETTLE_STEPS:-40}"
 SUCTION_NORMAL_MAX_ANGLE_DEG="${SUCTION_NORMAL_MAX_ANGLE_DEG:-10.0}"
 SUCTION_EFFECTIVE_RADIUS_RATIO="${SUCTION_EFFECTIVE_RADIUS_RATIO:-0.7}"
 SUCTION_DETACH_GRACE_STEPS="${SUCTION_DETACH_GRACE_STEPS:-2}"
+FILTER_OBVIOUS_THROWS="${FILTER_OBVIOUS_THROWS:-1}"
+THROW_RELEASE_HEIGHT_MARGIN_M="${THROW_RELEASE_HEIGHT_MARGIN_M:-0.06}"
+THROW_PEAK_HEIGHT_MARGIN_M="${THROW_PEAK_HEIGHT_MARGIN_M:-0.10}"
 OVERWRITE_EXISTING="${OVERWRITE_EXISTING:-0}"
 SHOW_DATASET_INFO="${SHOW_DATASET_INFO:-0}"
 
@@ -79,8 +82,11 @@ convert_one() {
     --suction-normal-max-angle-deg "$SUCTION_NORMAL_MAX_ANGLE_DEG" \
     --suction-effective-radius-ratio "$SUCTION_EFFECTIVE_RADIUS_RATIO" \
     --suction-detach-grace-steps "$SUCTION_DETACH_GRACE_STEPS" \
+    --throw-release-height-margin "$THROW_RELEASE_HEIGHT_MARGIN_M" \
+    --throw-peak-height-margin "$THROW_PEAK_HEIGHT_MARGIN_M" \
     --quiet \
-    $( [[ "$SPLIT_LARGE_ACTIONS" == "1" ]] && printf '%s' '--split-large-actions' ) >"$create_log_file" 2>&1; then
+    $( [[ "$SPLIT_LARGE_ACTIONS" == "1" ]] && printf '%s' '--split-large-actions' ) \
+    $( [[ "$FILTER_OBVIOUS_THROWS" != "1" ]] && printf '%s' '--disable-throw-filter' ) >"$create_log_file" 2>&1; then
     echo "[convert] ${progress_label}失败: $(basename "$demo_file")"
     tail -n 20 "$create_log_file" || true
     rm -f "$create_log_file"

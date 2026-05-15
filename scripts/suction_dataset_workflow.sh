@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEFAULT_LIBERO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LIBERO_ROOT="${LIBERO_ROOT:-$DEFAULT_LIBERO_ROOT}"
-WORKFLOW_ROOT="${WORKFLOW_ROOT:-$LIBERO_ROOT/data/suction_dataset}"
+WORKFLOW_ROOT="${WORKFLOW_ROOT:-$LIBERO_ROOT/data/suction_dataset_multi_part_sorting}"
 RAW_DIR="${RAW_DIR:-$WORKFLOW_ROOT/raw_hdf5}"
 TMP_DIR_ROOT="${TMP_DIR_ROOT:-$WORKFLOW_ROOT/tmp_chunks}"
 CONVERTED_DIR="${CONVERTED_DIR:-$WORKFLOW_ROOT/converted_hdf5}"

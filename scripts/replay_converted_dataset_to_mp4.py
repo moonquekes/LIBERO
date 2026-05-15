@@ -81,7 +81,7 @@ def main():
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--fps", type=int, default=20)
     parser.add_argument(
-        "--output-dir", default="/home/x/vla/libero/data/suction_dataset/replay_mp4"
+        "--output-dir", default="/home/x/vla/libero/data/suction_dataset_multi_part_sorting/replay_mp4"
     )
     parser.add_argument(
         "--suction-normal-max-angle-deg",

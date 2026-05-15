@@ -12,10 +12,10 @@
 
 推荐使用的新目录结构：
 
-- 原始采集 hdf5： [../data/suction_dataset/raw_hdf5](../data/suction_dataset/raw_hdf5)
-- 临时采集块： [../data/suction_dataset/tmp_chunks](../data/suction_dataset/tmp_chunks)
-- 离线渲染 hdf5： [../data/suction_dataset/converted_hdf5](../data/suction_dataset/converted_hdf5)
-- 重播 mp4： [../data/suction_dataset/replay_mp4](../data/suction_dataset/replay_mp4)
+- 原始采集 hdf5： [../data/suction_dataset_multi_part_sorting/raw_hdf5](../data/suction_dataset_multi_part_sorting/raw_hdf5)
+- 临时采集块： [../data/suction_dataset_multi_part_sorting/tmp_chunks](../data/suction_dataset_multi_part_sorting/tmp_chunks)
+- 离线渲染 hdf5： [../data/suction_dataset_multi_part_sorting/converted_hdf5](../data/suction_dataset_multi_part_sorting/converted_hdf5)
+- 重播 mp4： [../data/suction_dataset_multi_part_sorting/replay_mp4](../data/suction_dataset_multi_part_sorting/replay_mp4)
 
 ---
 
@@ -34,8 +34,8 @@
 
 ### 默认输出
 
-- raw hdf5 → [../data/suction_dataset/raw_hdf5](../data/suction_dataset/raw_hdf5)
-- tmp chunks → [../data/suction_dataset/tmp_chunks](../data/suction_dataset/tmp_chunks)
+- raw hdf5 → [../data/suction_dataset_multi_part_sorting/raw_hdf5](../data/suction_dataset_multi_part_sorting/raw_hdf5)
+- tmp chunks → [../data/suction_dataset_multi_part_sorting/tmp_chunks](../data/suction_dataset_multi_part_sorting/tmp_chunks)
 
 ### 什么时候用
 
@@ -56,10 +56,73 @@ bash scripts/collect_only.sh
 如果要改任务：
 
 ```bash
-BDDL_FILE=libero/libero/bddl_files/custom/pick_up_the_steel_plate_and_place_it_in_the_basket.bddl \
+BDDL_FILE=libero/libero/bddl_files/custom/pick_up_the_rectangular_steel_plate_and_place_it_in_the_red_bin.bddl \
 NUM_DEMO=10 \
 bash scripts/collect_only.sh
 ```
+
+多零件分拣当前内置了 3 个 custom 任务：
+
+```bash
+libero/libero/bddl_files/custom/pick_up_the_rectangular_steel_plate_and_place_it_in_the_red_bin.bddl
+libero/libero/bddl_files/custom/pick_up_the_round_steel_plate_and_place_it_in_the_blue_bin.bddl
+libero/libero/bddl_files/custom/pick_up_the_triangular_steel_plate_and_place_it_in_the_yellow_bin.bddl
+```
+
+例如切换到圆形钢板任务：
+
+```bash
+BDDL_FILE=libero/libero/bddl_files/custom/pick_up_the_round_steel_plate_and_place_it_in_the_blue_bin.bddl \
+NUM_DEMO=10 \
+bash scripts/collect_only.sh
+```
+
+如果你准备开始正式采多零件分拣，推荐直接和旧数据分目录存放。
+下面这 3 条命令统一使用新的根目录：
+
+```bash
+$PWD/data/suction_dataset_multi_part_sorting
+```
+
+并且每个任务单独拆开 `raw_hdf5` 和 `tmp_chunks` 子目录，避免和之前的：
+
+```bash
+$PWD/data/suction_dataset
+```
+
+混在一起。
+
+### 推荐采集命令 1：矩形钢板 -> 红框
+
+```bash
+COLLECT_DIR="$PWD/data/suction_dataset_multi_part_sorting/raw_hdf5/rectangular_red_bin" \
+TMP_DIR_ROOT="$PWD/data/suction_dataset_multi_part_sorting/tmp_chunks/rectangular_red_bin" \
+BDDL_FILE="$PWD/libero/libero/bddl_files/custom/pick_up_the_rectangular_steel_plate_and_place_it_in_the_red_bin.bddl" \
+NUM_DEMO=20 \
+bash scripts/collect_only.sh
+```
+
+### 推荐采集命令 2：圆形钢板 -> 蓝框
+
+```bash
+COLLECT_DIR="$PWD/data/suction_dataset_multi_part_sorting/raw_hdf5/round_blue_bin" \
+TMP_DIR_ROOT="$PWD/data/suction_dataset_multi_part_sorting/tmp_chunks/round_blue_bin" \
+BDDL_FILE="$PWD/libero/libero/bddl_files/custom/pick_up_the_round_steel_plate_and_place_it_in_the_blue_bin.bddl" \
+NUM_DEMO=20 \
+bash scripts/collect_only.sh
+```
+
+### 推荐采集命令 3：三角形钢板 -> 黄框
+
+```bash
+COLLECT_DIR="$PWD/data/suction_dataset_multi_part_sorting/raw_hdf5/triangular_yellow_bin" \
+TMP_DIR_ROOT="$PWD/data/suction_dataset_multi_part_sorting/tmp_chunks/triangular_yellow_bin" \
+BDDL_FILE="$PWD/libero/libero/bddl_files/custom/pick_up_the_triangular_steel_plate_and_place_it_in_the_yellow_bin.bddl" \
+NUM_DEMO=20 \
+bash scripts/collect_only.sh
+```
+
+这里用 `$PWD/...` 而不是相对路径，是因为 `collect_only.sh` 运行时会先切到 `scripts/` 目录；直接写绝对路径更稳，不会把工业数据误写到旧目录或脚本目录下面。
 
 ---
 
@@ -76,11 +139,12 @@ bash scripts/collect_only.sh
 - 重放动作并渲染 `agentview` / `eye_in_hand`
 - 输出 converted `.hdf5`
 - 顺带打印数据统计
+- 默认保留 `success_settle_steps`，并启用保守的明显高抛投过滤
 
 ### 默认输入输出
 
-- 默认从 [../data/suction_dataset/raw_hdf5](../data/suction_dataset/raw_hdf5) 找最新 `.hdf5`
-- 输出到 [../data/suction_dataset/converted_hdf5](../data/suction_dataset/converted_hdf5)
+- 默认从 [../data/suction_dataset_multi_part_sorting/raw_hdf5](../data/suction_dataset_multi_part_sorting/raw_hdf5) 找最新 `.hdf5`
+- 输出到 [../data/suction_dataset_multi_part_sorting/converted_hdf5](../data/suction_dataset_multi_part_sorting/converted_hdf5)
 
 ### 什么时候用
 
@@ -97,13 +161,19 @@ bash scripts/offline_convert.sh
 转换指定文件：
 
 ```bash
-bash scripts/offline_convert.sh data/suction_dataset/raw_hdf5/xxx.hdf5
+bash scripts/offline_convert.sh data/suction_dataset_multi_part_sorting/raw_hdf5/xxx.hdf5
 ```
 
 转换某个目录里最新的文件：
 
 ```bash
-bash scripts/offline_convert.sh data/suction_dataset/raw_hdf5
+bash scripts/offline_convert.sh data/suction_dataset_multi_part_sorting/raw_hdf5
+```
+
+如果你想临时关闭明显高抛投过滤：
+
+```bash
+FILTER_OBVIOUS_THROWS=0 bash scripts/offline_convert.sh
 ```
 
 ---
@@ -123,10 +193,10 @@ bash scripts/offline_convert.sh data/suction_dataset/raw_hdf5
 
 ### 默认目录
 
-- raw → [../data/suction_dataset/raw_hdf5](../data/suction_dataset/raw_hdf5)
-- tmp → [../data/suction_dataset/tmp_chunks](../data/suction_dataset/tmp_chunks)
-- converted → [../data/suction_dataset/converted_hdf5](../data/suction_dataset/converted_hdf5)
-- replay → [../data/suction_dataset/replay_mp4](../data/suction_dataset/replay_mp4)
+- raw → [../data/suction_dataset_multi_part_sorting/raw_hdf5](../data/suction_dataset_multi_part_sorting/raw_hdf5)
+- tmp → [../data/suction_dataset_multi_part_sorting/tmp_chunks](../data/suction_dataset_multi_part_sorting/tmp_chunks)
+- converted → [../data/suction_dataset_multi_part_sorting/converted_hdf5](../data/suction_dataset_multi_part_sorting/converted_hdf5)
+- replay → [../data/suction_dataset_multi_part_sorting/replay_mp4](../data/suction_dataset_multi_part_sorting/replay_mp4)
 
 ### 常用模式
 
@@ -151,13 +221,13 @@ MODE=convert GENERATE_REPLAY=1 bash scripts/suction_dataset_workflow.sh
 #### 转换单个 raw 文件
 
 ```bash
-MODE=convert bash scripts/suction_dataset_workflow.sh data/suction_dataset/raw_hdf5/xxx.hdf5
+MODE=convert bash scripts/suction_dataset_workflow.sh data/suction_dataset_multi_part_sorting/raw_hdf5/xxx.hdf5
 ```
 
 #### 对单个 converted 文件导出 mp4
 
 ```bash
-MODE=replay bash scripts/suction_dataset_workflow.sh data/suction_dataset/converted_hdf5/xxx.hdf5
+MODE=replay bash scripts/suction_dataset_workflow.sh data/suction_dataset_multi_part_sorting/converted_hdf5/xxx.hdf5
 ```
 
 #### 一条龙执行
@@ -243,7 +313,7 @@ MODE=convert bash scripts/suction_dataset_workflow.sh
 ### 第三步：需要时再导出 mp4
 
 ```bash
-MODE=replay bash scripts/suction_dataset_workflow.sh data/suction_dataset/converted_hdf5/xxx.hdf5
+MODE=replay bash scripts/suction_dataset_workflow.sh data/suction_dataset_multi_part_sorting/converted_hdf5/xxx.hdf5
 ```
 
 ---

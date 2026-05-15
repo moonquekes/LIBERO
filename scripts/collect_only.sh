@@ -7,9 +7,9 @@ DEFAULT_LIBERO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_NAME="${ENV_NAME:-vla-adapter}"
 LIBERO_ROOT="${LIBERO_ROOT:-$DEFAULT_LIBERO_ROOT}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-$SCRIPT_DIR}"
-BDDL_FILE="${BDDL_FILE:-$LIBERO_ROOT/libero/libero/bddl_files/custom/pick_up_the_steel_plate_and_place_it_in_the_basket.bddl}"
-COLLECT_DIR="${COLLECT_DIR:-$LIBERO_ROOT/data/suction_dataset/raw_hdf5}"
-TMP_DIR_ROOT="${TMP_DIR_ROOT:-$LIBERO_ROOT/data/suction_dataset/tmp_chunks}"
+BDDL_FILE="${BDDL_FILE:-$LIBERO_ROOT/libero/libero/bddl_files/custom/pick_up_the_rectangular_steel_plate_and_place_it_in_the_red_bin.bddl}"
+COLLECT_DIR="${COLLECT_DIR:-$LIBERO_ROOT/data/suction_dataset_multi_part_sorting/raw_hdf5}"
+TMP_DIR_ROOT="${TMP_DIR_ROOT:-$LIBERO_ROOT/data/suction_dataset_multi_part_sorting/tmp_chunks}"
 NUM_DEMO="${NUM_DEMO:-20}"
 INVERT_CONTROLS="${INVERT_CONTROLS:-none}"
 PREVIEW_FLIP="${PREVIEW_FLIP:-xy}"
@@ -31,7 +31,7 @@ SUCTION_DISPLAY_PROXIMITY_THRESHOLD_M="${SUCTION_DISPLAY_PROXIMITY_THRESHOLD_M:-
 cd "$SCRIPTS_DIR"
 mkdir -p "$COLLECT_DIR" "$TMP_DIR_ROOT"
 
-echo "[collect] 采集 states/actions，并在每个成功回合后写入一个独立 HDF5 文件（默认不存图像）"
+echo "[collect] 采集多零件分拣任务的 states/actions，并在每个成功回合后写入一个独立 HDF5 文件（默认不存图像）"
 conda run -n "$ENV_NAME" python collect_demonstration.py \
   --device keyboard \
   --robots SuctionPanda \
