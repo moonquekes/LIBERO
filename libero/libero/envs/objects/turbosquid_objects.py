@@ -223,11 +223,70 @@ class SteelPlate(TurbosquidObjects):
 
 
 @register_object
+class SteelPlateRound(TurbosquidObjects):
+    def __init__(
+        self,
+        name="steel_plate_round",
+        obj_name="steel_plate_round",
+        joints=[dict(type="free", damping="0.0005")],
+    ):
+        super().__init__(name, obj_name, joints)
+        self.rotation = (0, 0)
+        self.rotation_axis = "x"
+
+
+@register_object
+class SteelPlateTriangle(TurbosquidObjects):
+    def __init__(
+        self,
+        name="steel_plate_triangle",
+        obj_name="steel_plate_triangle",
+        joints=[dict(type="free", damping="0.0005")],
+    ):
+        super().__init__(name, obj_name, joints)
+        self.rotation = (0, 0)
+        self.rotation_axis = "x"
+
+
+@register_object
 class BasketLarge(TurbosquidObjects):
     def __init__(
         self,
         name="basket_large",
         obj_name="basket_large",
+        joints=[dict(type="free", damping="0.0005")],
+    ):
+        super().__init__(name, obj_name, joints)
+
+
+@register_object
+class RedBin(TurbosquidObjects):
+    def __init__(
+        self,
+        name="red_bin",
+        obj_name="red_bin",
+        joints=[dict(type="free", damping="0.0005")],
+    ):
+        super().__init__(name, obj_name, joints)
+
+
+@register_object
+class BlueBin(TurbosquidObjects):
+    def __init__(
+        self,
+        name="blue_bin",
+        obj_name="blue_bin",
+        joints=[dict(type="free", damping="0.0005")],
+    ):
+        super().__init__(name, obj_name, joints)
+
+
+@register_object
+class YellowBin(TurbosquidObjects):
+    def __init__(
+        self,
+        name="yellow_bin",
+        obj_name="yellow_bin",
         joints=[dict(type="free", damping="0.0005")],
     ):
         super().__init__(name, obj_name, joints)
