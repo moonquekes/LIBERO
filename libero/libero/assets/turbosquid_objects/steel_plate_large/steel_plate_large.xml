@@ -1,6 +1,6 @@
 <mujoco model="steel_plate_large">
   <asset>
-    <material name="steel_plate_large_mat" rgba="0.62 0.64 0.68 1" specular="0.9" shininess="0.95" reflectance="0.2" />
+    <material name="steel_plate_large_mat" rgba="0.50 0.52 0.55 1" specular="0.18" shininess="0.25" reflectance="0.03" />
   </asset>
 
   <worldbody>

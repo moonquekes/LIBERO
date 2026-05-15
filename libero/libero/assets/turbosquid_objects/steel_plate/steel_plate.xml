@@ -1,6 +1,6 @@
 <mujoco model="steel_plate">
   <asset>
-    <material name="steel_plate_mat" rgba="0.62 0.64 0.68 1" specular="0.9" shininess="0.95" reflectance="0.2" />
+    <material name="steel_plate_mat" rgba="0.50 0.52 0.55 1" specular="0.18" shininess="0.25" reflectance="0.03" />
   </asset>
 
   <worldbody>
@@ -10,6 +10,7 @@
         <site type="box" pos="0 0 0.0008" quat="1 0 0 0" size="0.040 0.040 0.0008" group="0" rgba="0.8 0.8 0.0 0" name="bottom_side" />
         <site type="box" pos="0.040 0 0.004" quat="1 0 0 0" size="0.0008 0.040 0.004" group="0" rgba="0.8 0.8 0.0 0" name="right_side" />
         <site type="box" pos="-0.040 0 0.004" quat="1 0 0 0" size="0.0008 0.040 0.004" group="0" rgba="0.8 0.8 0.0 0" name="left_side" />
+        <site type="sphere" pos="0 0 0.014" size="0.006" group="1" rgba="1 0 1 0" name="center_marker" />
 
         <geom name="steel_plate_visual" type="box" pos="0 0 0.004" size="0.040 0.040 0.004" material="steel_plate_mat" contype="0" conaffinity="0" group="1" />
         <geom name="steel_plate_collision" solimp="0.998 0.998 0.001" solref="0.001 1" density="180" friction="1.0 0.3 0.1" type="box" pos="0 0 0.004" size="0.040 0.040 0.004" group="0" rgba="0.8 0.8 0.8 0.3" />
