@@ -78,7 +78,7 @@ bash scripts/collect_only.sh
 ```bash
 cd /home/x/vla/libero
 
-NUM_DEMO=2 \
+NUM_DEMO=20 \
 COLLECT_DIR="$PWD/data/suction_dataset_multi_part_sorting/raw_hdf5/triangular_yellow_bin" \
 TMP_DIR_ROOT="$PWD/data/suction_dataset_multi_part_sorting/tmp_chunks/triangular_yellow_bin" \
 BDDL_FILE="$PWD/libero/libero/bddl_files/custom/pick_up_the_triangular_steel_plate_and_place_it_in_the_yellow_bin.bddl" \
