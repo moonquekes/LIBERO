@@ -26,21 +26,21 @@
       (rectangular_workpiece_slot
           (:target main_table)
           (:ranges (
-              (-0.3450 -0.3100 -0.2950 -0.2600)
+              (-0.3050 -0.3250 -0.2250 -0.2450)
             )
           )
       )
       (round_workpiece_slot
           (:target main_table)
           (:ranges (
-              (-0.1800 -0.3100 -0.1300 -0.2600)
+              (-0.1850 -0.3250 -0.1050 -0.2450)
             )
           )
       )
       (triangular_workpiece_slot
           (:target main_table)
           (:ranges (
-              (-0.0150 -0.3100 0.0350 -0.2600)
+              (-0.0650 -0.3250 0.0150 -0.2450)
             )
           )
       )
