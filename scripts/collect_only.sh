@@ -32,7 +32,7 @@ cd "$SCRIPTS_DIR"
 mkdir -p "$COLLECT_DIR" "$TMP_DIR_ROOT"
 
 echo "[collect] 采集多零件分拣任务的 states/actions，并在每个成功回合后写入一个独立 HDF5 文件（默认不存图像）"
-conda run -n "$ENV_NAME" python collect_demonstration.py \
+conda run --no-capture-output -n "$ENV_NAME" python -u collect_demonstration.py \
   --device keyboard \
   --robots SuctionPanda \
   --camera agentview \

@@ -24,6 +24,11 @@ from libero.libero.envs.suction_sticky_wrapper import SuctionStickyWrapper
 PREVIEW_WINDOW_NAME = "Wrist Camera (robot0_eye_in_hand)"
 WINDOW_SIZE = 512  # 腕部摄像头预览窗口及主窗口统一尺寸
 
+# 是否打印逐帧 [suction] 调试行。默认隐藏（刷屏太多），需要时设 SHOW_SUCTION=1 打开。
+SHOW_SUCTION_LOG = os.environ.get("SHOW_SUCTION", "0").strip().lower() not in (
+    "", "0", "false", "no", "off",
+)
+
 
 def clip_vector_norm(vector, max_norm):
     if max_norm <= 0:
@@ -505,7 +510,8 @@ def collect_human_trajectory(
             raw_success, success_ready
         )
         if suction_signature != last_suction_signature:
-            print(f"[suction] {suction_line1}; {suction_line2}")
+            if SHOW_SUCTION_LOG:
+                print(f"[suction] {suction_line1}; {suction_line2}")
             last_suction_signature = suction_signature
         if success_signature != last_success_signature:
             print(f"[success] {success_line1}; {success_line2}")
@@ -599,7 +605,6 @@ def collect_human_trajectory(
         else:
             task_completion_hold_count = -1  # null the counter if there's no success
 
-    print(count)
     if saving and record_cameras:
         try:
             payload = {}
@@ -1010,7 +1015,7 @@ if __name__ == "__main__":
     language_instruction = problem_info["language_instruction"]
     if "TwoArm" in problem_name:
         config["env_configuration"] = args.config
-    print(language_instruction)
+    print(f"[info] 任务指令: {language_instruction}")
     env_kwargs = dict(
         bddl_file_name=args.bddl_file,
         **config,
@@ -1103,7 +1108,6 @@ if __name__ == "__main__":
     remove_directory = []
     i = 0
     while i < args.num_demonstration:
-        print(i)
         saving = collect_human_trajectory(
             env,
             device,
@@ -1128,7 +1132,6 @@ if __name__ == "__main__":
             show_workpiece_center_marker=args.show_workpiece_center_marker,
         )
         if saving:
-            print(remove_directory)
             exported_files = gather_demonstrations_as_hdf5(
                 tmp_directory,
                 args.directory,
