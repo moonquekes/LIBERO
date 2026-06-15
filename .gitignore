@@ -18,3 +18,17 @@ libero.egg-info/
 .vscode/
 
 data/
+
+# --- multi-part sorting: 排除备份/评测输出/本会话orchestration助手 ---
+*.bak
+*.bak_*
+eval_r2/
+scripts/_sync_audit.sh
+scripts/_do_sync.sh
+scripts/dataset_audit.sh
+scripts/r13_status.sh
+scripts/r13_pack_status.sh
+scripts/r13_verify_meta.py
+scripts/poll_deploy_ready.sh
+scripts/watch_train_r3.sh
+scripts/watch_train_r4.sh
