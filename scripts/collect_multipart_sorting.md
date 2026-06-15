@@ -1,8 +1,36 @@
 # 多零件按形状分拣 — 数据采集 SOP
 
+## ⚙️ 采集前置环境（必读）
+
+> 采集是**人工键盘遥操作 + 有头渲染窗口**，需要可用的 X display。**每次新开终端、或与评测共用终端时，先执行**：
+>
+> 
+>
+> 不设 DISPLAY 会在 import 阶段直接挂：failed to acquire X connection: Bad display name（与几何/BDDL 改动无关）。
+> 建议**采集与评测各开一个终端**：评测要 MUJOCO_GL=egl 无头，采集要 DISPLAY=:0 有头，二者冲突。
+
+## ⚙️ 采集前置环境（必读）
+
+> 采集是**人工键盘遥操作 + 有头渲染窗口**，需要可用的 X display。**每次新开终端、或与评测共用终端时，先执行**：
+>
+> ```bash
+> export DISPLAY=:0     # WSLg 的 X server，让 pynput 连上 + 渲染窗口弹出
+> unset  MUJOCO_GL      # 若该终端跑过评测(MUJOCO_GL=egl 无头)，必须清掉，否则窗口出不来
+> ```
+>
+> 不设 `DISPLAY` 会在 `import` 阶段直接挂：`failed to acquire X connection: Bad display name`（与几何/BDDL 改动无关）。
+> 建议**采集与评测各开一个终端**：评测要 `MUJOCO_GL=egl` 无头，采集要 `DISPLAY=:0` 有头，二者冲突。
+
+> **⚠️ Round 2 更新（2026-06-08）：三角放大 + 槽加宽 + 数据复用决定**
+> - 三角钢板已放大 **1.15×**（内切圆 2.6→3.0cm，匹配圆形；commit `aa2e654`）。asset 与 BDDL 已改但**文件名不变 → 本 SOP 的采集命令照用，会自动用新几何+新槽**。
+> - 工件槽**中心保持不变**，仅把槽宽 2cm→8cm（消除放大后的 spawn 重叠，实测 0%/2700）。新坐标见第 1 节。
+> - **数据决定：旧 rect+round 全部复用（不重采），只重跑 `raw2xvla` 重打包；只有三角全删重采**——默认 25 + swap0 15 + swap1 15，用新大三角 + 贴到板面再吸。rect/round swap +10 增采暂缓。
+> - 复用前提=**槽中心没动**，旧 demo 固定位置仍落在新评测分布内；若改动中心则旧数据作废，切勿移中心。
+> - 注意：工件**朝向固定（yaw 不随机）**，只随机槽内位置。
+
 > 目标：为 **X-VLA 微调** 采集"按形状把钢板放进对应颜色框"的多任务数据。
 > 三任务**混合 co-train**，语言指令区分目标。共 **90 条** = 每任务 30 条（20 默认 + 5 换位A + 5 换位B）。
-> 框/相机/背景/光照固定；只随机：待抓零件所在 slot（换位）+ slot 内 ~2cm 小偏移 + 轻微朝向。
+> 框/相机/背景/光照固定；**朝向固定(yaw不随机)**；只随机：待抓零件所在 slot（换位）+ slot 内位置（8cm 槽宽，实际散布 方块±0.5/圆±0.2/三角±1.4cm）。
 
 ## 0. 路径约定
 
@@ -14,13 +42,13 @@ cd $LIBERO/scripts          # collect_only.sh 在此
 ```
 采集环境为人工遥操作（`--device keyboard`），需要图形界面（WSLg）。conda env 默认 `vla-adapter`。
 
-## 1. 默认布局 & slot 坐标（保持现有 ~2cm 窄 range，与已采 14 条一致）
+## 1. 默认布局 & slot 坐标（Round2: 中心不变, 槽宽 2→8cm）
 
 | slot | region 名 | 默认零件 | x 范围 | y 范围 |
 |---|---|---|---|---|
-| slot_0 | rectangular_workpiece_slot | 矩形 | -0.275~-0.255 | -0.295~-0.275 |
-| slot_1 | round_workpiece_slot | 圆形 | -0.155~-0.135 | -0.295~-0.275 |
-| slot_2 | triangular_workpiece_slot | 三角 | -0.035~-0.015 | -0.295~-0.275 |
+| slot_0 | rectangular_workpiece_slot | 矩形 | -0.305~-0.225 | -0.325~-0.245 |
+| slot_1 | round_workpiece_slot | 圆形 | -0.185~-0.105 | -0.325~-0.245 |
+| slot_2 | triangular_workpiece_slot | 三角 | -0.065~0.015 | -0.325~-0.245 |
 
 ## 2. 三任务 & 语言指令（换位时指令**不变**）
 
