@@ -36,9 +36,31 @@ import tempfile
 
 import numpy as np
 import h5py
+import cv2
 
 
 # ── 工具 ─────────────────────────────────────────────────────────────────────
+def jpeg_encode_frames(frames, quality=95):
+    """每帧 (H,W,3) RGB → JPEG 编码的 1D uint8 字节流（X-VLA decode_image_from_bytes 要求）。
+    直接对 RGB 数组 imencode（cv2 视作 BGR），与解码端 cv2.imdecode+Image.fromarray 往返一致，
+    颜色通道不反（已验证逐通道误差 < 2）。"""
+    param = [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)]
+    out = []
+    for fr in frames:
+        ok, buf = cv2.imencode(".jpg", np.ascontiguousarray(fr), param)
+        if not ok:
+            raise RuntimeError("cv2.imencode 失败")
+        out.append(np.frombuffer(buf.tobytes(), dtype=np.uint8))
+    return out
+
+
+def write_image_dataset(group, name, frames):
+    """把帧列表编码为 JPEG 并以 vlen-uint8 形式写入 h5（每帧一个变长字节流）。"""
+    jpegs = jpeg_encode_frames(frames)
+    ds = group.create_dataset(name, (len(jpegs),), dtype=h5py.vlen_dtype(np.uint8))
+    for i, b in enumerate(jpegs):
+        ds[i] = b
+    return ds
 def _decode(v):
     """h5py attr 可能是 bytes / np.bytes_ / str，统一成 str。"""
     if isinstance(v, bytes):
@@ -72,6 +94,28 @@ def mat_to_rotate6d(R):
     return np.concatenate([R[:3, 0], R[:3, 1]], axis=-1)
 
 
+# ── noop 过滤（原样移植 create_dataset.py，对齐 offline_convert / no_noops 分布）──
+def is_noop_action(action, prev_action, threshold):
+    """手臂位姿 delta（前6维）范数 < 阈值 且 夹爪状态不变 → 空动作帧。"""
+    if prev_action is None:
+        return float(np.linalg.norm(action[:-1])) < threshold
+    return float(np.linalg.norm(action[:-1])) < threshold and action[-1] == prev_action[-1]
+
+
+def compute_noop_preserve_indices(actions, cap_index, keep_before, keep_after):
+    """夹爪开关（吸/放切换）前后各保留 keep_before/keep_after 帧——抓放减速段不能丢。"""
+    preserve = set()
+    if len(actions) == 0 or (keep_before <= 0 and keep_after <= 0):
+        return preserve
+    for idx in range(max(cap_index + 1, 1), len(actions)):
+        if np.isclose(actions[idx][-1], actions[idx - 1][-1]):
+            continue
+        start = max(cap_index, idx - max(keep_before, 0))
+        end = min(len(actions), idx + max(keep_after, 0) + 1)
+        preserve.update(range(start, end))
+    return preserve
+
+
 # 三任务规范指令：co-train 需统一指令；同时清洗早期数据 language 里的
 # "shared stable v1" 等噪声后缀。按形状关键词映射（换位数据指令不变，同样命中）。
 CANON_LANG = {
@@ -101,6 +145,14 @@ def main():
     ap.add_argument("--resolution", type=int, default=256)
     ap.add_argument("--cap-index", type=int, default=5,
                     help="跳过开头 N 步（force sensor 不稳定的 settle 帧），与 create_dataset.py 一致")
+    ap.add_argument("--keep-noop", action="store_true",
+                    help="保留空动作帧（默认对齐 create_dataset：过滤手臂不动且夹爪不变的帧）")
+    ap.add_argument("--noop-threshold", type=float, default=1e-4,
+                    help="位姿 delta 范数低于此值视为 noop（与 offline_convert 一致）")
+    ap.add_argument("--noop-keep-before-gripper-change", type=int, default=8,
+                    help="夹爪开关前保留的 noop 帧数")
+    ap.add_argument("--noop-keep-after-gripper-change", type=int, default=8,
+                    help="夹爪开关后保留的 noop 帧数")
     ap.add_argument("--suction-normal-max-angle-deg", type=float, default=10.0)
     ap.add_argument("--suction-effective-radius-ratio", type=float, default=0.7)
     ap.add_argument("--suction-detach-grace-steps", type=int, default=2)
@@ -200,9 +252,25 @@ def main():
 
         ctrl = find_robots(env)[0].controller
 
+        # noop 过滤准备（与 create_dataset.py 同语义：空动作不 step、不记录；
+        # 但夹爪开关前后 ±N 帧强制保留）
+        filter_noop = not args.keep_noop
+        noop_preserve = (
+            compute_noop_preserve_indices(
+                actions, args.cap_index,
+                args.noop_keep_before_gripper_change,
+                args.noop_keep_after_gripper_change,
+            ) if filter_noop else set()
+        )
+        prev_kept = None
+        noop_skipped = 0
+
         abs6d, av_imgs, eih_imgs = [], [], []
         for j, a in enumerate(actions):
             if j < args.cap_index:               # 跳过 settle 帧（不 step、不记录，对齐 create_dataset.py）
+                continue
+            if filter_noop and is_noop_action(a, prev_kept, args.noop_threshold) and (j not in noop_preserve):
+                noop_skipped += 1                # 空动作：既不 step 也不记录（手臂本就不动，跳过无副作用）
                 continue
             obs, _, _, _ = env.step(a.tolist())
             gp = np.asarray(ctrl.goal_pos, dtype=np.float32)        # (3,)
@@ -211,14 +279,15 @@ def main():
             abs6d.append(np.concatenate([gp, rot6d, [grip]]))       # (10,)
             av_imgs.append(flip_agentview(obs["agentview_image"]))
             eih_imgs.append(obs["robot0_eye_in_hand_image"])
+            prev_kept = np.asarray(a).copy()     # 仅在「保留帧」后更新（含被保留的 noop）
 
         if not abs6d:
             print(f"  [skip] 轨迹过短：{raw_path}")
             continue
 
         abs6d = np.stack(abs6d).astype(np.float32)                  # (T,10)
-        av_imgs = np.ascontiguousarray(np.stack(av_imgs)).astype(np.uint8)
-        eih_imgs = np.ascontiguousarray(np.stack(eih_imgs)).astype(np.uint8)
+        av_imgs = [np.asarray(x, dtype=np.uint8) for x in av_imgs]
+        eih_imgs = [np.asarray(x, dtype=np.uint8) for x in eih_imgs]
 
         # 输出路径：保留 raw 的子目录结构以避免换位/默认同名相撞
         rel = os.path.relpath(raw_path, args.raw_root)
@@ -227,13 +296,14 @@ def main():
         with h5py.File(out_path, "w") as o:
             o.create_dataset("abs_action_6d", data=abs6d)
             g = o.create_group("observations")
-            g.create_dataset("agentview_image", data=av_imgs, compression="gzip")
-            g.create_dataset("robot0_eye_in_hand_image", data=eih_imgs, compression="gzip")
+            # 图像存 JPEG 编码的 vlen-uint8（每帧一条），对齐 X-VLA decode_image_from_bytes
+            write_image_dataset(g, "agentview_image", av_imgs)
+            write_image_dataset(g, "robot0_eye_in_hand_image", eih_imgs)
             o.create_dataset("language_instruction", data=np.bytes_(language))
             o.attrs["source_raw"] = raw_path
             o.attrs["bddl_file"] = bddl_file
         datalist.append(os.path.abspath(out_path))
-        print(f"  [{k+1}/{len(raw_files)}] T={abs6d.shape[0]:4d}  {os.path.basename(out_path)}")
+        print(f"  [{k+1}/{len(raw_files)}] T={abs6d.shape[0]:4d}  noop_skipped={noop_skipped:4d}  {os.path.basename(out_path)}")
 
     if env is not None:
         try:

@@ -469,6 +469,20 @@ def main():
     language_instruction = problem_info["language_instruction"]
 
     bddl_file_name = source_attrs["bddl_file_name"]
+    if isinstance(bddl_file_name, bytes):
+        bddl_file_name = bddl_file_name.decode()
+    # 早期数据（如 *_shared_stable_v1）的 bddl_file_name 可能指向已删/改名的文件。
+    # raw 自带 bddl_file_content，缺文件时落盘成临时 bddl，env 构建与下方 attr 写入都用它。
+    if not os.path.isfile(bddl_file_name) and "bddl_file_content" in source_attrs:
+        import tempfile
+        _bddl_content = source_attrs["bddl_file_content"]
+        if isinstance(_bddl_content, bytes):
+            _bddl_content = _bddl_content.decode()
+        _tmp_bddl = os.path.join(tempfile.gettempdir(), "_create_dataset_fallback.bddl")
+        with open(_tmp_bddl, "w") as _bf:
+            _bf.write(_bddl_content)
+        print(f"[warn] bddl 缺失，改用 raw 内嵌 bddl_file_content：{bddl_file_name}")
+        bddl_file_name = _tmp_bddl
 
     hdf5_path = resolve_output_dataset_path(args.dataset_path, bddl_file_name)
 
